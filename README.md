@@ -20,10 +20,10 @@ go get github.com/phildrip/stubz
 ## Usage
 
 
-stubz <input_directory> <InterfaceName> -o <output.go>
+stubz <input_directory> <interface> -o <output.go>
 
 - `<input_directory>`: The directory containing the Go file with the interface definition
-- `<InterfaceName>`: The name of the interface you want to generate a stub for
+- `<interface>`: The name of the interface you want to generate a stub for
 - `-o <output.go>`: (Optional) The output file name. If not provided, the stub code will be printed to stdout
 
 ### Example
