@@ -19,11 +19,8 @@ func main() {
 	flag.StringVar(&outputFile, "o", "", "output file name")
 	flag.Parse()
 
-	fmt.Println("NARG:", flag.NArg())
-	fmt.Println("ARGS:", flag.Args())
-	fmt.Println("outputFile:", outputFile)
 	if flag.NArg() != 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s  -o <output.go> <input_directory> <InterfaceName>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s  -o <output.go> <input_directory> <interface>\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -52,7 +49,6 @@ func main() {
 
 	for _, pkg := range pkgs {
 		packageName = pkg.Name
-		fmt.Println("Package:", pkg.Name)
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
 				if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == interfaceName {
