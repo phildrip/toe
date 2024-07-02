@@ -15,19 +15,28 @@ import (
 )
 
 func main() {
-	outputFile := flag.String("o", "", "output file name")
+	var outputFile string
+	flag.StringVar(&outputFile, "o", "", "output file name")
 	flag.Parse()
 
-	if flag.NArg() != 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <input.go> <InterfaceName> -o <output.go>\n", os.Args[0])
+	fmt.Println("NARG:", flag.NArg())
+	fmt.Println("ARGS:", flag.Args())
+	fmt.Println("outputFile:", outputFile)
+	if flag.NArg() != 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s  -o <output.go> <input_directory> <InterfaceName>\n", os.Args[0])
 		os.Exit(1)
 	}
 
-	// inputFile := flag.Arg(0)
+	inputDir := flag.Arg(0)
 	interfaceName := flag.Arg(1)
 
 	cfg := &packages.Config{
-		Mode: packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Mode: packages.NeedName |
+			packages.NeedFiles |
+			packages.NeedSyntax |
+			packages.NeedTypes |
+			packages.NeedTypesInfo,
+		Dir: inputDir,
 	}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
@@ -43,6 +52,7 @@ func main() {
 
 	for _, pkg := range pkgs {
 		packageName = pkg.Name
+		fmt.Println("Package:", pkg.Name)
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
 				if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == interfaceName {
@@ -55,8 +65,6 @@ func main() {
 		}
 	}
 
-	fmt.Println(interfaceMethods)
-
 	if len(interfaceMethods) == 0 {
 		fmt.Fprintf(os.Stderr, "Interface %s not found\n", interfaceName)
 		os.Exit(1)
@@ -64,15 +72,15 @@ func main() {
 
 	stubCode := generateStubCode(interfaceName, interfaceMethods, packageName)
 
-	if *outputFile == "" {
+	if outputFile == "" {
 		fmt.Println(stubCode)
 	} else {
-		err := os.WriteFile(*outputFile, []byte(stubCode), 0644)
+		err := os.WriteFile(outputFile, []byte(stubCode), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing output file: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Stub generated in %s\n", *outputFile)
+		fmt.Printf("Stub generated in %s\n", outputFile)
 	}
 }
 
@@ -83,33 +91,56 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 package {{.PackageName}}
 
 import (
-	"sync"
+    "sync"
 )
 
-type {{.StubName}} struct {	mu sync.Mutex
-	{{range .Methods}}
-	{{.Name}}Func func({{.Params}}) {{.Results}}
-	{{end}}
+type {{.StubName}}Call struct {
+    {{range .Methods}}
+    {{.Name}}Calls []struct {
+        {{.Params}}
+    }
+    {{end}}
+}
+
+type {{.StubName}} struct {
+    mu sync.Mutex
+    calls {{.StubName}}Call
+    {{range .Methods}}
+    {{.Name}}Func func({{.Params}}) {{.Results}}
+    {{end}}
 }
 
 func (s *{{.StubName}}) On() *{{.StubName}} {
-	return s
+    return s
 }
 
 {{range .Methods}}
 func (s *{{$.StubName}}) {{.Name}}({{.Params}}) {{.Results}} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.{{.Name}}Func({{.ParamNames}})
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.calls.{{.Name}}Calls = append(s.calls.{{.Name}}Calls, struct{ {{.Params}} }{ {{.ParamNames}} })
+    if s.{{.Name}}Func != nil {
+        return s.{{.Name}}Func({{.ParamNames}})
+    }
+    {{if .Results}}
+    var zero {{.Results}}
+    return zero
+    {{end}}
 }
 
 func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.{{.Name}}Func = func({{.Params}}) {{.Results}} {
-		return {{.ResultNames}}
-	}
-	return s
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.{{.Name}}Func = func({{.Params}}) {{.Results}} {
+        return {{.ResultNames}}
+    }
+    return s
+}
+
+func (s *{{$.StubName}}) {{.Name}}Calls() []struct{ {{.Params}} } {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    return s.calls.{{.Name}}Calls
 }
 {{end}}
 `))
@@ -151,9 +182,10 @@ func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
 
 	var buf strings.Builder
 	err := tmpl.Execute(&buf, struct {
-		PackageName string
-		StubName    string
-		Methods     []struct {
+		PackageName   string
+		InterfaceName string
+		StubName      string
+		Methods       []struct {
 			Name        string
 			Params      string
 			ParamNames  string
@@ -161,9 +193,10 @@ func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
 			ResultNames string
 		}
 	}{
-		PackageName: packageName,
-		StubName:    stubName,
-		Methods:     methodsData,
+		PackageName:   packageName,
+		InterfaceName: interfaceName,
+		StubName:      stubName,
+		Methods:       methodsData,
 	})
 
 	if err != nil {
@@ -176,6 +209,7 @@ func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
 	node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing generated code: %v\n", err)
+		fmt.Println(buf.String())
 		os.Exit(1)
 	}
 
