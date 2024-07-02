@@ -68,7 +68,7 @@ if len(paramCalls) != 1 || paramCalls[0].arg1 != 42 {
 
 stubz keeps things super-simple. It doesn't try to support all the features of mocking libraries like [gomock](https://github.com/golang/mock) or [pegomock](https://github.com/petergtz/pegomock). It's just a simple tool that generates a stub implementation for a given interface.
 
-By staying simple, stubz can fulfill 95% of the use cases I've needed in unit and integration tests. stubz doesn't allow you to specify different behaviour for different method calls. It also doesn't support method chaining or chaining multiple calls together. But it does make stubbing - the ability to define a return value given a method call - easy and quick.
+By staying simple, stubz can fulfill 95% of the use cases I've needed in unit and integration tests. stubz doesn't allow you to specify different behaviour for different method calls. It also doesn't support method chaining or chaining multiple calls together. But it does make stubbing - the ability to define a return value given a method call, and recording those calls - easy and quick.
 
 If you need more complex behaviour, you can use a mocking library like gomock or pegomock.
 
