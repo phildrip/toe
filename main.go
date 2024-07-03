@@ -31,38 +31,11 @@ func main() {
 	inputDir := flag.Arg(0)
 	interfaceName := flag.Arg(1)
 
-	cfg := &packages.Config{
-		Mode: packages.NeedName |
-			packages.NeedFiles |
-			packages.NeedSyntax |
-			packages.NeedTypes |
-			packages.NeedTypesInfo,
-		Dir: inputDir,
-	}
-	pkgs, err := packages.Load(cfg, ".")
+	interfaceMethods, packageName, err := findInterface(inputDir, interfaceName)
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error finding interface: %v\n", err)
 		os.Exit(1)
-	}
-	if packages.PrintErrors(pkgs) > 0 {
-		os.Exit(1)
-	}
-
-	var interfaceMethods []*ast.Field
-	var packageName string
-
-	for _, pkg := range pkgs {
-		packageName = pkg.Name
-		for _, file := range pkg.Syntax {
-			ast.Inspect(file, func(n ast.Node) bool {
-				if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == interfaceName {
-					if ift, ok := ts.Type.(*ast.InterfaceType); ok {
-						interfaceMethods = ift.Methods.List
-					}
-				}
-				return true
-			})
-		}
 	}
 
 	if len(interfaceMethods) == 0 {
@@ -70,7 +43,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	stubCode := generateStubCode(interfaceName, interfaceMethods, packageName)
+	stubCode, err := generateStubCode(interfaceName, interfaceMethods, packageName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
+		os.Exit(1)
+	}
 
 	if outputFile == "" {
 		fmt.Println(stubCode)
@@ -84,66 +61,48 @@ func main() {
 	}
 }
 
-func generateStubCode(interfaceName string, methods []*ast.Field, packageName string) string {
+func findInterface(inputDir string, interfaceName string) ([]*ast.Field, string, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName |
+			packages.NeedFiles |
+			packages.NeedSyntax |
+			packages.NeedTypes |
+			packages.NeedTypesInfo,
+		Dir: inputDir,
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		return nil, "", fmt.Errorf("load: %v", err)
+	}
+	if packages.PrintErrors(pkgs) > 0 {
+		return nil, "", fmt.Errorf("packages contain errors")
+	}
+
+	var interfaceMethods []*ast.Field
+	var packageName string
+
+	for _, pkg := range pkgs {
+		packageName = pkg.Name
+		for _, file := range pkg.Syntax {
+			ast.Inspect(
+				file, func(n ast.Node) bool {
+					if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == interfaceName {
+						if ift, ok := ts.Type.(*ast.InterfaceType); ok {
+							interfaceMethods = ift.Methods.List
+						}
+					}
+					return true
+				})
+		}
+	}
+	return interfaceMethods, packageName, nil
+}
+
+func generateStubCode(interfaceName string, methods []*ast.Field, packageName string) (string, error) {
 	stubName := "Stub" + interfaceName
 
-	tmpl := template.Must(template.New("stub").Parse(`
-package {{.PackageName}}
-
-import (
-    "sync"
-)
-
-type {{.StubName}}Call struct {
-    {{range .Methods}}
-    {{.Name}}Calls []struct {
-        {{.Params}}
-    }
-    {{end}}
-}
-
-type {{.StubName}} struct {
-    mu sync.Mutex
-    calls {{.StubName}}Call
-    {{range .Methods}}
-    {{.Name}}Func func({{.Params}}) {{.Results}}
-    {{end}}
-}
-
-func (s *{{.StubName}}) On() *{{.StubName}} {
-    return s
-}
-
-{{range .Methods}}
-func (s *{{$.StubName}}) {{.Name}}({{.Params}}) {{.Results}} {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    s.calls.{{.Name}}Calls = append(s.calls.{{.Name}}Calls, struct{ {{.Params}} }{ {{.ParamNames}} })
-    if s.{{.Name}}Func != nil {
-        return s.{{.Name}}Func({{.ParamNames}})
-    }
-    {{if .Results}}
-    var zero {{.Results}}
-    return zero
-    {{end}}
-}
-
-func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    s.{{.Name}}Func = func({{.Params}}) {{.Results}} {
-        return {{.ResultNames}}
-    }
-    return s
-}
-
-func (s *{{$.StubName}}) {{.Name}}Calls() []struct{ {{.Params}} } {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    return s.calls.{{.Name}}Calls
-}
-{{end}}
-`))
+	tmpl := template.Must(
+		template.New("stub").Parse(stubTemplate))
 
 	var methodsData []struct {
 		Name        string
@@ -165,62 +124,60 @@ func (s *{{$.StubName}}) {{.Name}}Calls() []struct{ {{.Params}} } {
 		results := getFieldList(funcType.Results)
 		resultNames := getFieldNames(funcType.Results)
 
-		methodsData = append(methodsData, struct {
-			Name        string
-			Params      string
-			ParamNames  string
-			Results     string
-			ResultNames string
-		}{
-			Name:        methodName,
-			Params:      params,
-			ParamNames:  paramNames,
-			Results:     results,
-			ResultNames: resultNames,
-		})
+		methodsData = append(
+			methodsData, struct {
+				Name        string
+				Params      string
+				ParamNames  string
+				Results     string
+				ResultNames string
+			}{
+				Name:        methodName,
+				Params:      params,
+				ParamNames:  paramNames,
+				Results:     results,
+				ResultNames: resultNames,
+			})
 	}
 
 	var buf strings.Builder
-	err := tmpl.Execute(&buf, struct {
-		PackageName   string
-		InterfaceName string
-		StubName      string
-		Methods       []struct {
-			Name        string
-			Params      string
-			ParamNames  string
-			Results     string
-			ResultNames string
-		}
-	}{
-		PackageName:   packageName,
-		InterfaceName: interfaceName,
-		StubName:      stubName,
-		Methods:       methodsData,
-	})
+	err := tmpl.Execute(
+		&buf, struct {
+			PackageName   string
+			InterfaceName string
+			StubName      string
+			Methods       []struct {
+				Name        string
+				Params      string
+				ParamNames  string
+				Results     string
+				ResultNames string
+			}
+		}{
+			PackageName:   packageName,
+			InterfaceName: interfaceName,
+			StubName:      stubName,
+			Methods:       methodsData,
+		})
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error generating stub: %v", err)
 	}
 
 	// Format the generated code
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing generated code: %v\n", err)
-		fmt.Println(buf.String())
-		os.Exit(1)
+		return "", fmt.Errorf("error parsing generated code: %v", err)
 	}
 
 	var formattedBuf strings.Builder
 	err = format.Node(&formattedBuf, fset, node)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error formatting generated code: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("error formatting generated code: %v", err)
 	}
 
-	return formattedBuf.String()
+	return formattedBuf.String(), nil
 }
 
 func getFieldList(fields *ast.FieldList) string {
