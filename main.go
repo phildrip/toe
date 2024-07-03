@@ -106,9 +106,9 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 
 	var methodsData []struct {
 		Name        string
-		Params      string
+		Params      []FieldInfo
 		ParamNames  string
-		Results     string
+		Results     []FieldInfo
 		ResultNames string
 	}
 
@@ -127,9 +127,9 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 		methodsData = append(
 			methodsData, struct {
 				Name        string
-				Params      string
+				Params      []FieldInfo
 				ParamNames  string
-				Results     string
+				Results     []FieldInfo
 				ResultNames string
 			}{
 				Name:        methodName,
@@ -148,9 +148,9 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 			StubName      string
 			Methods       []struct {
 				Name        string
-				Params      string
+				Params      []FieldInfo
 				ParamNames  string
-				Results     string
+				Results     []FieldInfo
 				ResultNames string
 			}
 		}{
@@ -168,6 +168,7 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
 	if err != nil {
+		fmt.Println(buf.String())
 		return "", fmt.Errorf("error parsing generated code: %v", err)
 	}
 
@@ -180,22 +181,33 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 	return formattedBuf.String(), nil
 }
 
-func getFieldList(fields *ast.FieldList) string {
+type FieldInfo struct {
+	Name string
+	Type string
+}
+
+func getFieldList(fields *ast.FieldList) []FieldInfo {
 	if fields == nil {
-		return ""
+		return nil
 	}
-	var params []string
+	var params []FieldInfo
 	for _, field := range fields.List {
 		paramType := getTypeString(field.Type)
 		if len(field.Names) > 0 {
 			for _, name := range field.Names {
-				params = append(params, fmt.Sprintf("%s %s", name.Name, paramType))
+				params = append(params, FieldInfo{
+					Name: name.Name,
+					Type: paramType,
+				})
 			}
 		} else {
-			params = append(params, paramType)
+			params = append(params, FieldInfo{
+				Name: "",
+				Type: paramType,
+			})
 		}
 	}
-	return strings.Join(params, ", ")
+	return params
 }
 
 func getFieldNames(fields *ast.FieldList) string {
@@ -230,7 +242,16 @@ func getTypeString(expr ast.Expr) string {
 	case *ast.InterfaceType:
 		return "interface{}"
 	case *ast.FuncType:
-		return "func(" + getFieldList(t.Params) + ") " + getFieldList(t.Results)
+		params := getFieldList(t.Params)
+		results := getFieldList(t.Results)
+		var paramTypes, resultTypes []string
+		for _, param := range params {
+			paramTypes = append(paramTypes, param.Type)
+		}
+		for _, result := range results {
+			resultTypes = append(resultTypes, result.Type)
+		}
+		return fmt.Sprintf("func(%s) (%s)", strings.Join(paramTypes, ", "), strings.Join(resultTypes, ", "))
 	default:
 		return fmt.Sprintf("%T", expr)
 	}
