@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -13,6 +14,9 @@ import (
 
 	"golang.org/x/tools/go/packages"
 )
+
+//go:embed stub.go.tmpl
+var stubTemplate string
 
 func main() {
 	var outputFile string

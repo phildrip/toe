@@ -1,0 +1,55 @@
+package {{.PackageName}}
+
+import (
+    "sync"
+)
+
+type {{.StubName}}Call struct {
+    {{range .Methods}}
+    {{.Name}}Calls []struct {
+        {{.Params}}
+    }
+    {{end}}
+}
+
+type {{.StubName}} struct {
+    mu sync.Mutex
+    calls {{.StubName}}Call
+    {{range .Methods}}
+    {{.Name}}Func func({{.Params}}) {{.Results}}
+    {{end}}
+}
+
+func (s *{{.StubName}}) On() *{{.StubName}} {
+    return s
+}
+
+{{range .Methods}}
+func (s *{{$.StubName}}) {{.Name}}({{.Params}}) {{.Results}} {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.calls.{{.Name}}Calls = append(s.calls.{{.Name}}Calls, struct{ {{.Params}} }{ {{.ParamNames}} })
+    if s.{{.Name}}Func != nil {
+        return s.{{.Name}}Func({{.ParamNames}})
+    }
+    {{if .Results}}
+    var zero {{.Results}}
+    return zero
+    {{end}}
+}
+
+func (s *{{$.StubName}}) {{.Name}}ThenReturn({{.Results}}) *{{$.StubName}} {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.{{.Name}}Func = func({{.Params}}) {{.Results}} {
+        return {{.ResultNames}}
+    }
+    return s
+}
+
+func (s *{{$.StubName}}) {{.Name}}Calls() []struct{ {{.Params}} } {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    return s.calls.{{.Name}}Calls
+}
+{{end}}
