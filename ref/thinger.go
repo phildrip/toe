@@ -1,4 +1,4 @@
-package main
+package ref
 
 type Thinger interface {
 	Thing() error
