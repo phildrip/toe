@@ -15,7 +15,8 @@ func TestRef(t *testing.T) {
 
 	stub.OnThing().Return(err1)
 	stub.OnThingWithParam().Return(err2)
-	stub.OnThingWithParams().Return("a string", err3)
+	expectedString := "a string"
+	stub.OnThingWithParams().Return(expectedString, err3)
 
 	err := stub.Thing()
 	if err != err1 {
@@ -35,21 +36,21 @@ func TestRef(t *testing.T) {
 		t.Errorf("expected %v, got %v", 1, len(stub.ThingWithParamCalls))
 	}
 
-	outStr, err := stub.ThingWithParams(1, "a string")
+	outStr, err := stub.ThingWithParams(1, expectedString)
 	if stub.ThingWithParamsCalls[0].Arg1 != 1 {
 		t.Errorf("expected %v, got %v", 1, stub.ThingWithParamsCalls[0].Arg1)
 	}
 
-	if stub.ThingWithParamsCalls[0].Arg2 != "a string" {
-		t.Errorf("expected %v, got %v", "a string", stub.ThingWithParamsCalls[0].Arg2)
+	if stub.ThingWithParamsCalls[0].Arg2 != expectedString {
+		t.Errorf("expected %v, got %v", expectedString, stub.ThingWithParamsCalls[0].Arg2)
 	}
 
 	if len(stub.ThingWithParamsCalls) != 1 {
 		t.Errorf("expected %v, got %v", 1, len(stub.ThingWithParamsCalls))
 	}
 
-	if outStr != "a string" {
-		t.Errorf("expected %v, got %v", "a string", outStr)
+	if outStr != expectedString {
+		t.Errorf("expected %v, got %v", expectedString, outStr)
 	}
 
 }
