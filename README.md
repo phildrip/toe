@@ -1,38 +1,40 @@
-# stubz
+# toe
 
-stubz is a Go tool that automatically generates stub implementations for Go interfaces. It's useful for creating mock objects in unit tests.
+toe is a Go tool that automatically generates stub implementations for Go interfaces. It's useful
+for creating test doubles in unit tests - but only stubs, not mocks or fakes.
 
 ## Features
 
 - Generates stub implementations for any Go interface
 - Records method calls and their parameters
 - Allows setting up return values for stubbed methods
-- Thread-safe implementation using mutex
+- Thread-safe
 
 ## Installation
 
-To install stubz, use the following command:
+To install toe, use the following command:
 
 ```
-go get github.com/phildrip/stubz
+go get github.com/phildrip/toe
 ```
 
 ## Usage
 
-
-stubz <input_directory> <interface> -o <output.go>
+toe <input_directory> <interface> -o <output.go>
 
 - `<input_directory>`: The directory containing the Go file with the interface definition
 - `<interface>`: The name of the interface you want to generate a stub for
-- `-o <output.go>`: (Optional) The output file name. If not provided, the stub code will be printed to stdout
+- `-o <output.go>`: (Optional) The output file name. If not provided, the stub code will be printed
+  to stdout
 
 ### Example
 
 ```bash
-stubz . Thinger -o stub_thinger.go
+toe . Thinger -o stub_thinger.go
 ```
 
-This command will generate a stub implementation for the Thinger interface defined in the current directory and save it to stub_thinger.go.
+This command will generate a stub implementation for the Thinger interface defined in the current
+directory and save it to stub_thinger.go.
 
 ## Generated Stub Structure
 
@@ -55,40 +57,47 @@ stub.ThingWithParam(42)
 // Assert on calls
 calls := stub.ThingCalls()
 if len(calls) != 1 {
-     t.Errorf("Expected 1 call to Thing(), got %d", len(calls))
+t.Errorf("Expected 1 call to Thing(), got %d", len(calls))
 }
 
 paramCalls := stub.ThingWithParamCalls()
 if len(paramCalls) != 1 || paramCalls[0].arg1 != 42 {
-     t.Errorf("Expected 1 call to ThingWithParam(42), got %+v", paramCalls)
+t.Errorf("Expected 1 call to ThingWithParam(42), got %+v", paramCalls)
 }
 ```
 
 ## Why another generator?
 
-stubz keeps things super-simple. It doesn't try to support all the features of mocking libraries like [gomock](https://github.com/golang/mock) or [pegomock](https://github.com/petergtz/pegomock). It's just a simple tool that generates a stub implementation for a given interface.
+toe keeps things super-simple. It doesn't try to support all the features of mocking libraries
+like [gomock](https://github.com/golang/mock) or [pegomock](https://github.com/petergtz/pegomock).
+It's just a simple tool that generates a stub implementation for a given interface.
 
-By staying simple, stubz can fulfill 95% of the use cases I've needed in unit and integration tests - but makes those 95% of cases easy. stubz doesn't allow you to specify different behaviour for different method calls. It also doesn't support method chaining or chaining multiple calls together. But it does make stubbing - the ability to define a return value given a method call, and recording those calls - easy and quick.
+By staying simple, toe can fulfill 95% of the use cases I've needed in unit and integration tests -
+but makes those 95% of cases easy. toe doesn't allow you to specify different behaviour for
+different method calls. It also doesn't support method chaining or chaining multiple calls together.
+But it does make stubbing - the ability to define a return value given a method call, and recording
+those calls - easy and quick.
 
 If you need more complex behaviour, you can use a mocking library like gomock or pegomock.
 
 ## Building from Source
 
-To build stubz from source:
+To build toe from source:
 
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/phildrip/stubz.git
+git clone https://github.com/phildrip/toe.git
 ```
 
 2. Navigate to the project directory:
 
 ```bash
-cd stubz
+cd toe
 ```
 
 3. Build the project:
+
 ```bash
 go build
 ```

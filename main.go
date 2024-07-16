@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -20,11 +21,17 @@ var stubTemplate string
 
 func main() {
 	var outputFile string
+	var disableFormatting bool
+	flag.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
+
 	flag.StringVar(&outputFile, "o", "", "output file name")
 	flag.Parse()
 
 	if flag.NArg() != 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s  -o <output.go> <input_directory> <interface>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr,
+			"Usage: %s [-no-fmt] -o <output.go> <input_directory> <interface>\n",
+			os.Args[0])
+
 		os.Exit(1)
 	}
 
@@ -43,7 +50,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	stubCode, err := generateStubCode(interfaceName, interfaceMethods, packageName)
+	stubCode, err := generateStubCode(interfaceName,
+		interfaceMethods,
+		packageName,
+		disableFormatting)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
 		os.Exit(1)
@@ -98,19 +108,49 @@ func findInterface(inputDir string, interfaceName string) ([]*ast.Field, string,
 	return interfaceMethods, packageName, nil
 }
 
-func generateStubCode(interfaceName string, methods []*ast.Field, packageName string) (string, error) {
+type methodData struct {
+	Name        string
+	Params      []string
+	ParamNames  []string
+	Results     []string
+	ResultNames []string
+}
+
+func zip(a []string, b []string, fmtStr string) []string {
+	if len(a) != len(b) {
+		panic("unequal length")
+	}
+	var zipped []string
+	for i := range a {
+		zipped = append(zipped, fmt.Sprintf(fmtStr, a[i], b[i]))
+	}
+	return zipped
+}
+
+// joinl joins a list of strings with a separator, with arguments reversed
+// compared to strings.Join.
+func joinl(sep string, a []string) string {
+	return strings.Join(a, sep)
+}
+
+func generateStubCode(interfaceName string,
+	methods []*ast.Field,
+	packageName string,
+	disableFormatting bool) (string, error) {
 	stubName := "Stub" + interfaceName
 
-	tmpl := template.Must(
-		template.New("stub").Parse(stubTemplate))
-
-	var methodsData []struct {
-		Name        string
-		Params      string
-		ParamNames  string
-		Results     string
-		ResultNames string
+	funcMap := template.FuncMap{
+		"join":  strings.Join,
+		"zip":   zip,
+		"joinl": joinl,
 	}
+
+	tmpl := template.Must(
+		template.New("stub").
+			Funcs(funcMap).
+			Parse(stubTemplate))
+
+	var methodsData []methodData
 
 	for _, method := range methods {
 		if len(method.Names) == 0 {
@@ -122,16 +162,10 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 		params := getFieldList(funcType.Params)
 		paramNames := getFieldNames(funcType.Params)
 		results := getFieldList(funcType.Results)
-		resultNames := getFieldNames(funcType.Results)
+		resultNames := getResultNames(funcType.Results)
 
 		methodsData = append(
-			methodsData, struct {
-				Name        string
-				Params      string
-				ParamNames  string
-				Results     string
-				ResultNames string
-			}{
+			methodsData, methodData{
 				Name:        methodName,
 				Params:      params,
 				ParamNames:  paramNames,
@@ -141,18 +175,13 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 	}
 
 	var buf strings.Builder
+	fmt.Println(prettyPrint(methodsData))
 	err := tmpl.Execute(
 		&buf, struct {
 			PackageName   string
 			InterfaceName string
 			StubName      string
-			Methods       []struct {
-				Name        string
-				Params      string
-				ParamNames  string
-				Results     string
-				ResultNames string
-			}
+			Methods       []methodData
 		}{
 			PackageName:   packageName,
 			InterfaceName: interfaceName,
@@ -164,25 +193,34 @@ func generateStubCode(interfaceName string, methods []*ast.Field, packageName st
 		return "", fmt.Errorf("error generating stub: %v", err)
 	}
 
-	// Format the generated code
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
-	if err != nil {
-		return "", fmt.Errorf("error parsing generated code: %v", err)
-	}
+	if !disableFormatting {
+		// Format the generated code
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
+		if err != nil {
+			return "", fmt.Errorf("error parsing generated code: %v", err)
+		}
 
-	var formattedBuf strings.Builder
-	err = format.Node(&formattedBuf, fset, node)
-	if err != nil {
-		return "", fmt.Errorf("error formatting generated code: %v", err)
-	}
+		var formattedBuf strings.Builder
+		err = format.Node(&formattedBuf, fset, node)
+		if err != nil {
+			return "", fmt.Errorf("error formatting generated code: %v", err)
+		}
 
-	return formattedBuf.String(), nil
+		return formattedBuf.String(), nil
+	} else {
+		return buf.String(), nil
+	}
 }
 
-func getFieldList(fields *ast.FieldList) string {
+func prettyPrint(i interface{}) string {
+	s, _ := json.MarshalIndent(i, "", "\t")
+	return string(s)
+}
+
+func getFieldList(fields *ast.FieldList) []string {
 	if fields == nil {
-		return ""
+		return nil
 	}
 	var params []string
 	for _, field := range fields.List {
@@ -195,12 +233,12 @@ func getFieldList(fields *ast.FieldList) string {
 			params = append(params, paramType)
 		}
 	}
-	return strings.Join(params, ", ")
+	return params
 }
 
-func getFieldNames(fields *ast.FieldList) string {
+func getFieldNames(fields *ast.FieldList) []string {
 	if fields == nil {
-		return ""
+		return nil
 	}
 	var names []string
 	for _, field := range fields.List {
@@ -212,7 +250,24 @@ func getFieldNames(fields *ast.FieldList) string {
 			names = append(names, "_")
 		}
 	}
-	return strings.Join(names, ", ")
+	return names
+}
+
+func getResultNames(fields *ast.FieldList) []string {
+	if fields == nil {
+		return nil
+	}
+	var names []string
+	for i, field := range fields.List {
+		if len(field.Names) > 0 {
+			for _, name := range field.Names {
+				names = append(names, name.Name)
+			}
+		} else {
+			names = append(names, fmt.Sprintf("R%d", i))
+		}
+	}
+	return names
 }
 
 func getTypeString(expr ast.Expr) string {
@@ -230,7 +285,8 @@ func getTypeString(expr ast.Expr) string {
 	case *ast.InterfaceType:
 		return "interface{}"
 	case *ast.FuncType:
-		return "func(" + getFieldList(t.Params) + ") " + getFieldList(t.Results)
+		return "func(" + strings.Join(getFieldList(t.Params), ", "+
+			"") + ") " + strings.Join(getFieldList(t.Results), ", ")
 	default:
 		return fmt.Sprintf("%T", expr)
 	}
