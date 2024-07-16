@@ -1,5 +1,7 @@
 # toe
 
+#### trip-free test stubs
+
 toe is a Go tool that automatically generates stub implementations for Go interfaces. It's useful
 for creating test doubles in unit tests - but only stubs, not mocks or fakes.
 
@@ -14,13 +16,15 @@ for creating test doubles in unit tests - but only stubs, not mocks or fakes.
 
 To install toe, use the following command:
 
-```
+```bash
 go get github.com/phildrip/toe
 ```
 
 ## Usage
 
-toe <input_directory> <interface> -o <output.go>
+```bash
+toe -o <output.go> <input_directory> <interface> 
+```
 
 - `<input_directory>`: The directory containing the Go file with the interface definition
 - `<interface>`: The name of the interface you want to generate a stub for
