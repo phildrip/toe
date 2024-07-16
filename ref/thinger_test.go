@@ -2,8 +2,8 @@ package ref_test
 
 import (
 	"errors"
-	refstubs "stubz/ref/stubs"
 	"testing"
+	refstubs "toe/ref/stubs"
 )
 
 func TestRef(t *testing.T) {
