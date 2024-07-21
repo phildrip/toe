@@ -60,7 +60,7 @@ type Stub{{$method.Name}}Then struct {
 
 func (s *Stub{{$method.Name}}Then) Return({{zip $method.ResultNames $method.Results "%s %s" | joinl ", "}}) {
     s.stub.{{$method.Name}}Ret = {{$method.Name}}Ret{
-        {{join .ResultNames ","}},
+        {{range $resultName := .ResultNames}} {{$resultName}}: {{$resultName}}, {{end}}
     }
 }
 

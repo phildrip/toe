@@ -172,7 +172,7 @@ func TestGenerateStubCode(t *testing.T) {
 			tt.name, func(t *testing.T) {
 				stubCode, err := GenerateStubCode(tt.interfaceName, tt.methods, tt.packageName, tt.disableFormatting)
 				if err != nil {
-					t.Fatalf("GenerateStubCode() error = %v", err)
+					t.Fatalf("GenerateStubCode() error = %v, stub code: \n%v", err, stubCode)
 				}
 
 				for _, expectedSubstring := range tt.expectedSubstrings {
