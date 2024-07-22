@@ -39,11 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	stubCode, err := gen.GenerateStubCode(
-		interfaceName,
-		interfaceMethods,
-		packageName,
-		disableFormatting)
+	stubCode, err := gen.GenerateStubCode(interfaceName, interfaceMethods, packageName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
 		os.Exit(1)

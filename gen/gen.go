@@ -75,11 +75,9 @@ type methodData struct {
 // The stub implementation is named "Stub" followed by the interface name.
 // For each method in the interface, the stub implementation includes parameter and
 // return value declarations matching the interface method.
-func GenerateStubCode(
-	interfaceName string,
+func GenerateStubCode(interfaceName string,
 	methods []*ast.Field,
-	packageName string,
-	disableFormatting bool) (string, error) {
+	packageName string) (string, error) {
 
 	stubName := "Stub" + interfaceName
 
@@ -120,7 +118,7 @@ func GenerateStubCode(
 
 	var buf strings.Builder
 
-	//fmt.Println(prettyPrint(methodsData))
+	// fmt.Println(prettyPrint(methodsData))
 
 	err := tmpl.Execute(
 		&buf, struct {
@@ -139,24 +137,24 @@ func GenerateStubCode(
 		return "", fmt.Errorf("error generating stub: %v", err)
 	}
 
-	if !disableFormatting {
-		// Format the generated code
-		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
-		if err != nil {
-			return "", fmt.Errorf("error parsing generated code: %v", err)
-		}
+	return buf.String(), nil
+}
 
-		var formattedBuf strings.Builder
-		err = format.Node(&formattedBuf, fset, node)
-		if err != nil {
-			return "", fmt.Errorf("error formatting generated code: %v", err)
-		}
-
-		return formattedBuf.String(), nil
-	} else {
-		return buf.String(), nil
+func FormatCode(code string) (string, error) {
+	// Format the generated code
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "", code, parser.ParseComments)
+	if err != nil {
+		return "", fmt.Errorf("error parsing generated code: %v", err)
 	}
+
+	var formattedBuf strings.Builder
+	err = format.Node(&formattedBuf, fset, node)
+	if err != nil {
+		return "", fmt.Errorf("error formatting generated code: %v", err)
+	}
+
+	return formattedBuf.String(), nil
 }
 
 func getFieldList(fields *ast.FieldList) []string {

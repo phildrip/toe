@@ -84,11 +84,15 @@ func TestFindInterface(t *testing.T) {
 				}
 
 				if gotPackageName != tt.wantPackageName {
-					t.Errorf("FindInterface() gotPackageName = %v, want %v", gotPackageName, tt.wantPackageName)
+					t.Errorf("FindInterface() gotPackageName = %v, want %v",
+						gotPackageName,
+						tt.wantPackageName)
 				}
 
 				if len(gotMethods) != len(tt.wantMethods) {
-					t.Errorf("FindInterface() gotMethods length = %v, want %v", len(gotMethods), len(tt.wantMethods))
+					t.Errorf("FindInterface() gotMethods length = %v, want %v",
+						len(gotMethods),
+						len(tt.wantMethods))
 					return
 				}
 
@@ -133,7 +137,7 @@ func TestGenerateStubCode(t *testing.T) {
 				"package testdata",
 				"type StubInterface struct",
 				"func (s *StubInterface) Method1()",
-				"func (s *StubInterface) Method2() error",
+				"func (s *StubInterface) Method2() (error)",
 			},
 		},
 		{
@@ -162,7 +166,7 @@ func TestGenerateStubCode(t *testing.T) {
 			expectedSubstrings: []string{
 				"package testdata",
 				"type StubInterfaceWithParam struct",
-				"func (s *StubInterfaceWithParam) Method1(arg1 int) error",
+				"func (s *StubInterfaceWithParam) Method1(arg1 int) (error)",
 			},
 		},
 	}
@@ -170,7 +174,7 @@ func TestGenerateStubCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				stubCode, err := GenerateStubCode(tt.interfaceName, tt.methods, tt.packageName, tt.disableFormatting)
+				stubCode, err := GenerateStubCode(tt.interfaceName, tt.methods, tt.packageName)
 				if err != nil {
 					t.Fatalf("GenerateStubCode() error = %v, stub code: \n%v", err, stubCode)
 				}
