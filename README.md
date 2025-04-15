@@ -20,6 +20,12 @@ To install toe, use the following command:
 go get github.com/phildrip/toe
 ```
 
+Or for the latest version:
+
+```bash
+go install github.com/phildrip/toe@latest
+```
+
 ## Usage
 
 ```bash
@@ -30,6 +36,7 @@ toe -o <output.go> <input_directory> <interface>
 - `<interface>`: The name of the interface you want to generate a stub for
 - `-o <output.go>`: (Optional) The output file name. If not provided, the stub code will be printed
   to stdout
+- `-no-fmt`: (Optional) Disable formatting of the output
 
 ### Example
 
@@ -106,6 +113,48 @@ cd toe
 go build
 ```
 
+## Testing
+
+To run the unit tests:
+
+```bash
+go test ./...
+```
+
+To run the integration tests:
+
+```bash
+# First build the binary
+go build -o toe
+
+# Then run the integration test script
+./integration_test.sh
+```
+
+Or use the Makefile:
+
+```bash
+# Run all unit tests
+make test
+
+# Run integration tests
+make test-integration
+
+# Run all tests
+make test-all
+```
+
+## Contributing
+
+Contributions are welcome! Here are some ways you can contribute:
+
+1. Report bugs by opening an issue
+2. Suggest new features or improvements
+3. Submit pull requests with bug fixes or new features
+4. Improve documentation
+
+Please make sure to run tests before submitting a pull request.
+
 ## License
 
 MIT License
@@ -113,4 +162,3 @@ MIT License
 ## Author
 
 Phil Richards (https://github.com/phildrip)
-
