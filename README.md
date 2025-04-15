@@ -2,6 +2,8 @@
 
 #### trip-free test stubs
 
+## IN DEVELOPMENT, DO NOT USE YET
+
 toe is a Go tool that automatically generates stub implementations for Go interfaces. It's useful
 for creating test doubles in unit tests - but only stubs, not mocks or fakes.
 
