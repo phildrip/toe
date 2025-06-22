@@ -129,7 +129,7 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 				tp := namedType.TypeParams().At(i)
 				data.TypeParams = append(data.TypeParams, ParamData{
 					Name: tp.Obj().Name(),
-					Type: tp.String(), // e.g., "T comparable"
+					Type: tp.Constraint().String(), // Use Constraint().String() to get the actual constraint type string
 				})
 			}
 		}
@@ -310,9 +310,17 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 	if len(ifaceData.TypeParams) > 0 {
 		fields := make([]*ast.Field, len(ifaceData.TypeParams))
 		for i, tp := range ifaceData.TypeParams {
+			// Determine the AST representation of the type parameter's constraint
+			var constraintType ast.Expr
+			if tp.Type == "interface{}" {
+				constraintType = &ast.InterfaceType{Methods: &ast.FieldList{}} // Represents 'interface{}'
+			} else {
+				constraintType = ast.NewIdent(tp.Type)
+			}
+
 			fields[i] = &ast.Field{
 				Names: []*ast.Ident{ast.NewIdent(tp.Name)},
-				Type:  ast.NewIdent(strings.Split(tp.Type, " ")[1]), // e.g., "comparable"
+				Type:  constraintType,
 			}
 		}
 		stubStruct.TypeParams = &ast.FieldList{List: fields}
@@ -348,15 +356,27 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 		},
 	}
 
-	// If the struct is generic, add type params to receiver
+	// If the struct is generic, build the full receiver type e.g., *StubName[T]
 	if len(typeParams) > 0 {
-		typeArgs := make([]ast.Expr, len(typeParams))
-		for i, tp := range typeParams {
-			typeArgs[i] = ast.NewIdent(tp.Name)
+		var typeArgs []ast.Expr
+		for _, tp := range typeParams {
+			typeArgs = append(typeArgs, ast.NewIdent(tp.Name))
 		}
-		recv.List[0].Type = &ast.IndexListExpr{
-			X:       &ast.StarExpr{X: ast.NewIdent(stubName)},
-			Indices: typeArgs,
+
+		if len(typeArgs) == 1 {
+			recv.List[0].Type = &ast.StarExpr{
+				X: &ast.IndexExpr{
+					X:     ast.NewIdent(stubName),
+					Index: typeArgs[0],
+				},
+			}
+		} else {
+			recv.List[0].Type = &ast.StarExpr{
+				X: &ast.IndexListExpr{
+					X:       ast.NewIdent(stubName),
+					Indices: typeArgs,
+				},
+			}
 		}
 	}
 
@@ -432,7 +452,7 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 
 	// Add logic for MethodNameFunc (lambda stubbing) or fixed return values
 	var returnArgs []ast.Expr
-	for i, r := range method.Results {
+	for i := range method.Results {
 		returnArgs = append(returnArgs, &ast.SelectorExpr{
 			X:   ast.NewIdent("s"),
 			Sel: ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i)),
