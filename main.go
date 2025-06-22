@@ -1,8 +1,6 @@
 package main
 
 import (
-	_ "embed"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -11,13 +9,10 @@ import (
 	"go/token"
 	"os"
 	"strings"
-	"text/template"
+	"go/types"
 
 	"golang.org/x/tools/go/packages"
 )
-
-//go:embed stub.go.tmpl
-var stubTemplate string
 
 func main() {
 	var outputFile string
@@ -38,22 +33,13 @@ func main() {
 	inputDir := flag.Arg(0)
 	interfaceName := flag.Arg(1)
 
-	interfaceMethods, packageName, err := findInterface(inputDir, interfaceName)
-
+	interfaceData, err := findInterface(inputDir, interfaceName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error finding interface: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(interfaceMethods) == 0 {
-		fmt.Fprintf(os.Stderr, "Interface %s not found\n", interfaceName)
-		os.Exit(1)
-	}
-
-	stubCode, err := generateStubCode(interfaceName,
-		interfaceMethods,
-		packageName,
-		disableFormatting)
+	stubCode, err := generateStubCode(interfaceData, disableFormatting)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
 		os.Exit(1)
@@ -71,7 +57,7 @@ func main() {
 	}
 }
 
-func findInterface(inputDir string, interfaceName string) ([]*ast.Field, string, error) {
+func findInterface(inputDir string, interfaceName string) (*InterfaceData, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName |
 			packages.NeedFiles |
@@ -82,212 +68,226 @@ func findInterface(inputDir string, interfaceName string) ([]*ast.Field, string,
 	}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
-		return nil, "", fmt.Errorf("load: %v", err)
+		return nil, fmt.Errorf("load: %v", err)
 	}
 	if packages.PrintErrors(pkgs) > 0 {
-		return nil, "", fmt.Errorf("packages contain errors")
+		return nil, fmt.Errorf("packages contain errors")
 	}
 
-	var interfaceMethods []*ast.Field
-	var packageName string
+	var foundInterface *InterfaceData
 
 	for _, pkg := range pkgs {
-		packageName = pkg.Name
-		for _, file := range pkg.Syntax {
-			ast.Inspect(
-				file, func(n ast.Node) bool {
-					if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == interfaceName {
-						if ift, ok := ts.Type.(*ast.InterfaceType); ok {
-							interfaceMethods = ift.Methods.List
-						}
-					}
-					return true
-				})
-		}
-	}
-	return interfaceMethods, packageName, nil
-}
-
-type methodData struct {
-	Name        string
-	Params      []string
-	ParamNames  []string
-	Results     []string
-	ResultNames []string
-}
-
-func zip(a []string, b []string, fmtStr string) []string {
-	if len(a) != len(b) {
-		panic("unequal length")
-	}
-	var zipped []string
-	for i := range a {
-		zipped = append(zipped, fmt.Sprintf(fmtStr, a[i], b[i]))
-	}
-	return zipped
-}
-
-// joinl joins a list of strings with a separator, with arguments reversed
-// compared to strings.Join.
-func joinl(sep string, a []string) string {
-	return strings.Join(a, sep)
-}
-
-func generateStubCode(interfaceName string,
-	methods []*ast.Field,
-	packageName string,
-	disableFormatting bool) (string, error) {
-	stubName := "Stub" + interfaceName
-
-	funcMap := template.FuncMap{
-		"join":  strings.Join,
-		"zip":   zip,
-		"joinl": joinl,
-	}
-
-	tmpl := template.Must(
-		template.New("stub").
-			Funcs(funcMap).
-			Parse(stubTemplate))
-
-	var methodsData []methodData
-
-	for _, method := range methods {
-		if len(method.Names) == 0 {
+		scope := pkg.Types.Scope()
+		obj := scope.Lookup(interfaceName)
+		if obj == nil {
 			continue
 		}
-		methodName := method.Names[0].Name
-		funcType := method.Type.(*ast.FuncType)
 
-		params := getFieldList(funcType.Params)
-		paramNames := getFieldNames(funcType.Params)
-		results := getFieldList(funcType.Results)
-		resultNames := getResultNames(funcType.Results)
+		ifaceType, ok := obj.Type().Underlying().(*types.Interface)
+		if !ok {
+			continue // Not an interface
+		}
 
-		methodsData = append(
-			methodsData, methodData{
-				Name:        methodName,
-				Params:      params,
-				ParamNames:  paramNames,
-				Results:     results,
-				ResultNames: resultNames,
-			})
+		namedType, isNamed := obj.Type().(*types.Named)
+
+		if foundInterface != nil {
+			return nil, fmt.Errorf("found duplicate interface %s in package %s and %s", interfaceName, foundInterface.PackageName, pkg.Name)
+		}
+
+		data := &InterfaceData{
+			PackageName: pkg.Name,
+			Name:        interfaceName,
+		}
+
+		// Handle generic interfaces
+		if isNamed && namedType.TypeParams() != nil {
+			for i := 0; i < namedType.TypeParams().Len(); i++ {
+				tp := namedType.TypeParams().At(i)
+				data.TypeParams = append(data.TypeParams, ParamData{
+					Name: tp.Obj().Name(),
+					Type: tp.String(), // e.g., "T comparable"
+				})
+			}
+		}
+
+		for i := 0; i < ifaceType.NumMethods(); i++ {
+			method := ifaceType.Method(i)
+			sig := method.Type().(*types.Signature)
+
+			methodData := MethodData{
+				Name: method.Name(),
+			}
+
+			// Parameters
+			if sig.Params() != nil {
+				for j := 0; j < sig.Params().Len(); j++ {
+					param := sig.Params().At(j)
+					methodData.Params = append(methodData.Params, ParamData{
+						Name: param.Name(),
+						Type: param.Type().String(),
+					})
+				}
+			}
+
+			// Results
+			if sig.Results() != nil {
+				for j := 0; j < sig.Results().Len(); j++ {
+					result := sig.Results().At(j)
+					name := result.Name()
+					if name == "" {
+						name = fmt.Sprintf("R%d", j) // Default name for unnamed results
+					}
+					methodData.Results = append(methodData.Results, ResultData{
+						Name: name,
+						Type: result.Type().String(),
+					})
+				}
+			}
+			data.Methods = append(data.Methods, methodData)
+		}
+		foundInterface = data
 	}
 
+	if foundInterface == nil {
+		return nil, fmt.Errorf("interface %s not found", interfaceName)
+	}
+
+	return foundInterface, nil
+}
+
+// InterfaceData and MethodData define the intermediate representation
+// of the parsed interface, including type information.
+type ParamData struct {
+	Name string
+	Type string // String representation of the type, using type.String()
+}
+
+type ResultData struct {
+	Name string
+	Type string // String representation of the type, using type.String()
+}
+
+type MethodData struct {
+	Name    string
+	Params  []ParamData
+	Results []ResultData
+}
+
+type InterfaceData struct {
+	PackageName string
+	Name        string
+	Methods     []MethodData
+	TypeParams  []ParamData // For generic interfaces, e.g., [T comparable]
+}
+
+func generateStubCode(ifaceData *InterfaceData, disableFormatting bool) (string, error) {
+	// Create a new file set and AST file
+	fset := token.NewFileSet()
+	file := &ast.File{
+		Name: ast.NewIdent(ifaceData.PackageName),
+	}
+
+	// Create the stub struct definition
+	stubName := "Stub" + ifaceData.Name
+	stubStruct := &ast.TypeSpec{
+		Name: ast.NewIdent(stubName),
+		Type: &ast.StructType{
+			Fields: &ast.FieldList{},
+		},
+	}
+
+	// Add type parameters for generic interfaces
+	if len(ifaceData.TypeParams) > 0 {
+		fields := make([]*ast.Field, len(ifaceData.TypeParams))
+		for i, tp := range ifaceData.TypeParams {
+			fields[i] = &ast.Field{
+				Names: []*ast.Ident{ast.NewIdent(tp.Name)},
+				Type:  ast.NewIdent(strings.Split(tp.Type, " ")[1]), // e.g., "comparable"
+			}
+		}
+		stubStruct.TypeParams = &ast.FieldList{List: fields}
+	}
+
+	decls := []ast.Decl{
+		&ast.GenDecl{
+			Tok:   token.TYPE,
+			Specs: []ast.Spec{stubStruct},
+		},
+	}
+
+	// Create methods for the stub struct
+	for _, method := range ifaceData.Methods {
+		decls = append(decls, createMethod(stubName, method, ifaceData.TypeParams))
+	}
+
+	file.Decls = decls
+
+	// Generate the code
 	var buf strings.Builder
-	fmt.Println(prettyPrint(methodsData))
-	err := tmpl.Execute(
-		&buf, struct {
-			PackageName   string
-			InterfaceName string
-			StubName      string
-			Methods       []methodData
-		}{
-			PackageName:   packageName,
-			InterfaceName: interfaceName,
-			StubName:      stubName,
-			Methods:       methodsData,
+	if err := format.Node(&buf, fset, file); err != nil {
+		return "", fmt.Errorf("error formatting generated code: %v", err)
+	}
+
+	return buf.String(), nil
+}
+
+func createMethod(stubName string, method MethodData, typeParams []ParamData) *ast.FuncDecl {
+	// Method receiver
+	recv := &ast.FieldList{
+		List: []*ast.Field{
+			{
+				Names: []*ast.Ident{ast.NewIdent("s")},
+				Type:  &ast.StarExpr{X: ast.NewIdent(stubName)},
+			},
+		},
+	}
+
+	// If the struct is generic, add type params to receiver
+	if len(typeParams) > 0 {
+		typeArgs := make([]ast.Expr, len(typeParams))
+		for i, tp := range typeParams {
+			typeArgs[i] = ast.NewIdent(tp.Name)
+		}
+		recv.List[0].Type = &ast.IndexListExpr{
+			X:       &ast.StarExpr{X: ast.NewIdent(stubName)},
+			Indices: typeArgs,
+		}
+	}
+
+	// Method parameters
+	params := &ast.FieldList{}
+	for _, p := range method.Params {
+		params.List = append(params.List, &ast.Field{
+			Names: []*ast.Ident{ast.NewIdent(p.Name)},
+			Type:  ast.NewIdent(p.Type),
 		})
-
-	if err != nil {
-		return "", fmt.Errorf("error generating stub: %v", err)
 	}
 
-	if !disableFormatting {
-		// Format the generated code
-		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, "", buf.String(), parser.ParseComments)
-		if err != nil {
-			return "", fmt.Errorf("error parsing generated code: %v", err)
-		}
-
-		var formattedBuf strings.Builder
-		err = format.Node(&formattedBuf, fset, node)
-		if err != nil {
-			return "", fmt.Errorf("error formatting generated code: %v", err)
-		}
-
-		return formattedBuf.String(), nil
-	} else {
-		return buf.String(), nil
+	// Method results
+	results := &ast.FieldList{}
+	for _, r := range method.Results {
+		results.List = append(results.List, &ast.Field{
+			Type: ast.NewIdent(r.Type),
+		})
 	}
-}
 
-func prettyPrint(i interface{}) string {
-	s, _ := json.MarshalIndent(i, "", "\t")
-	return string(s)
-}
+	// Method body
+	body := &ast.BlockStmt{
+		List: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	}
 
-func getFieldList(fields *ast.FieldList) []string {
-	if fields == nil {
-		return nil
-	}
-	var params []string
-	for _, field := range fields.List {
-		paramType := getTypeString(field.Type)
-		if len(field.Names) > 0 {
-			for _, name := range field.Names {
-				params = append(params, fmt.Sprintf("%s %s", name.Name, paramType))
-			}
-		} else {
-			params = append(params, paramType)
-		}
-	}
-	return params
-}
-
-func getFieldNames(fields *ast.FieldList) []string {
-	if fields == nil {
-		return nil
-	}
-	var names []string
-	for _, field := range fields.List {
-		if len(field.Names) > 0 {
-			for _, name := range field.Names {
-				names = append(names, name.Name)
-			}
-		} else {
-			names = append(names, "_")
-		}
-	}
-	return names
-}
-
-func getResultNames(fields *ast.FieldList) []string {
-	if fields == nil {
-		return nil
-	}
-	var names []string
-	for i, field := range fields.List {
-		if len(field.Names) > 0 {
-			for _, name := range field.Names {
-				names = append(names, name.Name)
-			}
-		} else {
-			names = append(names, fmt.Sprintf("R%d", i))
-		}
-	}
-	return names
-}
-
-func getTypeString(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		return fmt.Sprintf("%s.%s", getTypeString(t.X), t.Sel.Name)
-	case *ast.StarExpr:
-		return "*" + getTypeString(t.X)
-	case *ast.ArrayType:
-		return "[]" + getTypeString(t.Elt)
-	case *ast.MapType:
-		return fmt.Sprintf("map[%s]%s", getTypeString(t.Key), getTypeString(t.Value))
-	case *ast.InterfaceType:
-		return "interface{}"
-	case *ast.FuncType:
-		return "func(" + strings.Join(getFieldList(t.Params), ", "+
-			"") + ") " + strings.Join(getFieldList(t.Results), ", ")
-	default:
-		return fmt.Sprintf("%T", expr)
+	return &ast.FuncDecl{
+		Recv: recv,
+		Name: ast.NewIdent(method.Name),
+		Type: &ast.FuncType{
+			Params:  params,
+			Results: results,
+		},
+		Body: body,
 	}
 }
+
+
+
