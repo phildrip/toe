@@ -1,22 +1,22 @@
 package generic
 
-type StubGenericInterfaceDoCall struct {
+type StubGenericInterfaceDoCall[T any] struct {
 	value T
 }
-type StubGenericInterfaceGetCall struct {
+type StubGenericInterfaceGetCall[T any] struct {
 }
 type StubGenericInterface[T any] struct {
 	DoFunc      func(value T) (T, error)
-	DoCalls     []StubGenericInterfaceDoCall
+	DoCalls     []StubGenericInterfaceDoCall[T]
 	DoReturns0  T
 	DoReturns1  error
 	GetFunc     func() T
-	GetCalls    []StubGenericInterfaceGetCall
+	GetCalls    []StubGenericInterfaceGetCall[T]
 	GetReturns0 T
 }
 
 func (s *StubGenericInterface[T]) Do(value T) (T, error) {
-	s.DoCalls = append(s.DoCalls, StubGenericInterfaceDoCall{value: value})
+	s.DoCalls = append(s.DoCalls, StubGenericInterfaceDoCall[T]{value: value})
 	if s.DoFunc != nil {
 		return s.DoFunc(value)
 	} else {
@@ -24,7 +24,7 @@ func (s *StubGenericInterface[T]) Do(value T) (T, error) {
 	}
 }
 func (s *StubGenericInterface[T]) Get() T {
-	s.GetCalls = append(s.GetCalls, StubGenericInterfaceGetCall{})
+	s.GetCalls = append(s.GetCalls, StubGenericInterfaceGetCall[T]{})
 	if s.GetFunc != nil {
 		return s.GetFunc()
 	} else {

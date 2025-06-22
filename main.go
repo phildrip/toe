@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"strings"
 	"go/types"
@@ -14,41 +15,79 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-func main() {
+// ParamData represents a parameter or result in a method signature.
+type ParamData struct {
+	Name string
+	Type string // String representation of the type, using type.String()
+}
+
+// MethodData represents a method of an interface.
+type MethodData struct {
+	Name    string
+	Params  []ParamData
+	Results []ResultData
+}
+
+// ResultData represents a result in a method signature.
+type ResultData struct {
+	Name string
+	Type string // String representation of the type, using type.String()
+}
+
+// InterfaceData represents a parsed interface, including its methods and type parameters.
+type InterfaceData struct {
+	PackageName string
+	Name        string
+	Methods     []MethodData
+	TypeParams  []ParamData // For generic interfaces, e.g., [T comparable]
+}
+
+// StubOptions allows configuring the generated stub behavior.
+type StubOptions struct {
+	WithLocking bool // If true, the stub will include a sync.Mutex for concurrency safety.
+}
+
+func run(stdout, stderr io.Writer, args []string) int {
 	var outputFile string
 	var withLocking bool
 	var disableFormatting bool
 
-	flag.BoolVar(&withLocking, "with-locking", false, "include sync.Mutex for concurrency safety")
-	flag.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
-	flag.StringVar(&outputFile, "o", "", "output file name")
-	flag.Parse()
+	fs := flag.NewFlagSet("toe", flag.ContinueOnError)
+	fs.SetOutput(stderr) // Direct flag errors to stderr
+
+	fs.BoolVar(&withLocking, "with-locking", false, "include sync.Mutex for concurrency safety")
+	fs.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
+	fs.StringVar(&outputFile, "o", "", "output file name")
+
+	// Parse command-line arguments, excluding the program name
+	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
 
 	var opts = &StubOptions{
 		WithLocking: withLocking,
 	}
 
-	if flag.NArg() != 2 {
-		fmt.Fprintf(os.Stderr,
+	if fs.NArg() != 2 {
+		fmt.Fprintf(stderr,
 			"Usage: %s [-with-locking] [-no-fmt] -o <output.go> <input_directory> <interface>\n",
-			os.Args[0])
-
-		os.Exit(1)
+			args[0])
+		return 1
 	}
 
-	inputDir := flag.Arg(0)
-	interfaceName := flag.Arg(1)
+	inputDir := fs.Arg(0)
+	interfaceName := fs.Arg(1)
 
 	interfaceData, err := findInterface(inputDir, interfaceName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding interface: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Error finding interface: %v\n", err)
+		return 1
 	}
 
 	stubCode, err := generateStubCode(interfaceData, opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Error generating stub: %v\n", err)
+		return 1
 	}
 
 	if !disableFormatting {
@@ -56,29 +95,34 @@ func main() {
 		fset := token.NewFileSet()
 		node, err := parser.ParseFile(fset, "", []byte(stubCode), parser.ParseComments)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing generated code for formatting: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error parsing generated code for formatting: %v\n", err)
+			return 1
 		}
 
 		var formattedBuf strings.Builder
 		err = format.Node(&formattedBuf, fset, node)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error formatting generated code: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error formatting generated code: %v\n", err)
+			return 1
 		}
 		stubCode = formattedBuf.String()
 	}
 
 	if outputFile == "" {
-		fmt.Println(stubCode)
+		fmt.Fprintln(stdout, stubCode)
 	} else {
 		err := os.WriteFile(outputFile, []byte(stubCode), 0644)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing output file: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error writing output file: %v\n", err)
+			return 1
 		}
-		fmt.Printf("Stub generated in %s\n", outputFile)
+		fmt.Fprintf(stdout, "Stub generated in %s\n", outputFile)
 	}
+	return 0
+}
+
+func main() {
+	os.Exit(run(os.Stdout, os.Stderr, os.Args))
 }
 
 func findInterface(inputDir string, interfaceName string) (*InterfaceData, error) {
@@ -179,37 +223,6 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 	return foundInterface, nil
 }
 
-// InterfaceData and MethodData define the intermediate representation
-// of the parsed interface, including type information.
-type ParamData struct {
-	Name string
-	Type string // String representation of the type, using type.String()
-}
-
-type ResultData struct {
-	Name string
-	Type string // String representation of the type, using type.String()
-}
-
-type MethodData struct {
-	Name    string
-	Params  []ParamData
-	Results []ResultData
-}
-
-type InterfaceData struct {
-	PackageName string
-	Name        string
-	Methods     []MethodData
-	TypeParams  []ParamData // For generic interfaces, e.g., [T comparable]
-}
-
-// StubOptions allows configuring the generated stub behavior.
-type StubOptions struct {
-	WithLocking bool // If true, the stub will include a sync.Mutex for concurrency safety.
-}
-
-
 func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, error) {
 	// Create a new file set and AST file
 	fset := token.NewFileSet()
@@ -267,13 +280,18 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 				Type:  funcType,
 			})
 
-		// Add MethodNameCall struct type
+		// Add MethodNameCall struct type and its field
 		callStructName := stubName + method.Name + "Call"
 		callStruct := &ast.TypeSpec{
 			Name: ast.NewIdent(callStructName),
 			Type: &ast.StructType{
 				Fields: &ast.FieldList{},
 			},
+		}
+
+		// Add type parameters to call struct if the main struct is generic
+		if len(ifaceData.TypeParams) > 0 {
+			callStruct.TypeParams = &ast.FieldList{List: copyTypeParams(ifaceData.TypeParams)}
 		}
 
 		for _, p := range method.Params {
@@ -284,16 +302,29 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 				})
 		}
 
-		file.Decls = append(file.Decls, &ast.GenDecl{ // Changed from decls = append(decls, ...)
+		file.Decls = append(file.Decls, &ast.GenDecl{
 			Tok:   token.TYPE,
 			Specs: []ast.Spec{callStruct},
 		})
 
-		// Add MethodNameCalls field
+		// Add MethodNameCalls field (slice of callStructName[T])
+		var callListType ast.Expr = ast.NewIdent(callStructName)
+		if len(ifaceData.TypeParams) > 0 {
+			var typeArgs []ast.Expr
+			for _, tp := range ifaceData.TypeParams {
+				typeArgs = append(typeArgs, ast.NewIdent(tp.Name))
+			}
+			if len(typeArgs) == 1 {
+				callListType = &ast.IndexExpr{X: ast.NewIdent(callStructName), Index: typeArgs[0]}
+			} else {
+				callListType = &ast.IndexListExpr{X: ast.NewIdent(callStructName), Indices: typeArgs}
+			}
+		}
+
 		stubStruct.Type.(*ast.StructType).Fields.List = append(
 			stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
 				Names: []*ast.Ident{ast.NewIdent(method.Name + "Calls")},
-				Type:  &ast.ArrayType{Elt: ast.NewIdent(callStructName)},
+				Type:  &ast.ArrayType{Elt: callListType},
 			})
 
 		// Add fields for fixed return values
@@ -345,6 +376,25 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 	return buf.String(), nil
 }
 
+// copyTypeParams creates a new slice of ast.Field representing type parameters.
+// It's used to safely copy type parameters for nested generic structs.
+func copyTypeParams(params []ParamData) []*ast.Field {
+	copied := make([]*ast.Field, len(params))
+	for i, p := range params {
+		var constraintType ast.Expr
+		if p.Type == "interface{}" {
+			constraintType = &ast.InterfaceType{Methods: &ast.FieldList{}}
+		} else {
+			constraintType = ast.NewIdent(p.Type)
+		}
+		copied[i] = &ast.Field{
+			Names: []*ast.Ident{ast.NewIdent(p.Name)},
+			Type:  constraintType,
+		}
+	}
+	return copied
+}
+
 func createMethod(stubName string, method MethodData, typeParams []ParamData, opts *StubOptions) *ast.FuncDecl {
 	// Method receiver
 	recv := &ast.FieldList{
@@ -383,18 +433,13 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 	// Method parameters
 	params := &ast.FieldList{}
 	for _, p := range method.Params {
-		params.List = append(params.List, &ast.Field{
-			Names: []*ast.Ident{ast.NewIdent(p.Name)},
-			Type:  ast.NewIdent(p.Type),
-		})
+		params.List = append(params.List, &ast.Field{Names: []*ast.Ident{ast.NewIdent(p.Name)}, Type: ast.NewIdent(p.Type)})
 	}
 
 	// Method results
 	results := &ast.FieldList{}
 	for _, r := range method.Results {
-		results.List = append(results.List, &ast.Field{
-			Type: ast.NewIdent(r.Type),
-		})
+		results.List = append(results.List, &ast.Field{Type: ast.NewIdent(r.Type)})
 	}
 
 	// Method body
@@ -431,8 +476,29 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 			Value: ast.NewIdent(p.Name),
 		})
 	}
+
+	// The type of the call instance needs to be generic if the interface is generic
+	var callInstanceType ast.Expr = ast.NewIdent(callStructName)
+	if len(typeParams) > 0 {
+		var typeArgs []ast.Expr
+		for _, tp := range typeParams {
+			typeArgs = append(typeArgs, ast.NewIdent(tp.Name))
+		}
+		if len(typeArgs) == 1 {
+			callInstanceType = &ast.IndexExpr{
+				X:     ast.NewIdent(callStructName),
+				Index: typeArgs[0],
+			}
+		} else {
+			callInstanceType = &ast.IndexListExpr{
+				X:       ast.NewIdent(callStructName),
+				Indices: typeArgs,
+			}
+		}
+	}
+
 	callInstance := &ast.CompositeLit{
-		Type: ast.NewIdent(callStructName),
+		Type: callInstanceType,
 		Elts: callElts,
 	}
 
