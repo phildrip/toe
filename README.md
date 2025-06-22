@@ -2,12 +2,12 @@
 
 #### trip-free test stubs
 
-`toe` is a Go tool that automatically generates thread-safe stub implementations for Go interfaces. It's useful for creating test doubles in unit tests. It is inspired by `pegomock` but focuses exclusively on stubbing.
+`toe` is a Go tool that automatically generates stub implementations for Go interfaces. It's useful for creating test doubles in unit tests. It is inspired by `pegomock` but focuses exclusively on stubbing.
 
 ## Features
 
 - Generates stub implementations for any Go interface, **including those with generic type parameters**.
-- **Optional Concurrency Safety**: Stubs can be generated with or without a `sync.Mutex` to help detect race conditions in your code.
+- **Configurable Concurrency Safety**: Stubs can be instantiated with or without a `sync.Mutex` at runtime to help detect race conditions in your code.
 - **Call Recording**: All method calls are recorded, allowing you to assert how many times a method was called and with which parameters.
 - **Flexible Return Values**: You can set up stubbed methods to return specific fixed values or to execute a custom lambda function for more complex logic.
 
@@ -28,27 +28,26 @@ toe [flags] <input_directory> <interface>
 -   `<input_directory>`: The directory containing the Go file with the interface definition.
 -   `<interface>`: The name of the interface you want to generate a stub for.
 -   `-o <output.go>`: (Optional) The output file name. If not provided, the stub code is printed to stdout.
--   `-with-locking`: (Optional) If provided, the generated stub will be thread-safe, protected by a `sync.Mutex`.
 
 ### Example
 
 ```bash
-# Generate a standard stub
+# Generate a standard stub file for the Calculator interface
 ./toe -o ./examples/stub_calculator.go ./examples/calculator Calculator
-
-# Generate a thread-safe stub with locking
-./toe -with-locking -o ./examples/stub_calculator_safe.go ./examples/calculator Calculator
 ```
 
 ## Generated Stub Structure
 
-The generated stub includes:
+`toe` generates a struct (e.g., `StubCalculator`) that implements your interface, along with a constructor function (e.g., `NewStubCalculator`).
 
--   A main `struct` that implements the interface (e.g., `StubCalculator`).
--   For each method in the interface, the stub contains three fields:
-    -   `MethodNameFunc`: A field to assign a lambda function (`func(...) (...)`) that will be executed when the method is called. This takes precedence over fixed return values.
-    -   `MethodNameCalls`: A slice of structs that records each call to the method and its parameters.
-    -   `MethodNameReturnsX`: Fields that hold fixed return values for the method (e.g., `DoSomethingReturns0`, `DoSomethingReturns1`).
+-   **Constructor**: A `NewStub<InterfaceName>` function is generated which allows you to instantiate the stub with configurable locking. For example: `NewStubCalculator(withLocking bool) *StubCalculator`.
+-   **Internal Fields**: The generated stub struct includes:
+    -   `mu sync.Mutex`: (Always present, but only used if `withLocking` is true in the constructor).
+    -   `_isLocked bool`: A flag indicating if the mutex should be used for this instance.
+    -   For each method in the interface, the stub contains three additional fields:
+        -   `MethodNameFunc`: A field to assign a lambda function (`func(...) (...)`) that will be executed when the method is called. This takes precedence over fixed return values.
+        -   `MethodNameCalls`: A slice of structs that records each call to the method and its parameters.
+        -   `MethodNameReturnsX`: Fields that hold fixed return values for the method (e.g., `DoSomethingReturns0`, `DoSomethingReturns1`).
 
 ## Example Usage in Tests
 
@@ -77,7 +76,8 @@ import (
 )
 
 func TestCalculatorStub(t *testing.T) {
-	stub := &examples.StubCalculator{}
+	// Instantiate the stub, enabling locking for this instance
+	stub := examples.NewStubCalculator(true)
 
 	// --- Test 1: Using fixed return values ---
 	stub.SubtractReturns0 = 10
