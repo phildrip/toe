@@ -14,10 +14,13 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+func main() {
 	var outputFile string
 	var withLocking bool
+	var disableFormatting bool
 
 	flag.BoolVar(&withLocking, "with-locking", false, "include sync.Mutex for concurrency safety")
+	flag.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
 	flag.StringVar(&outputFile, "o", "", "output file name")
 	flag.Parse()
 
@@ -27,7 +30,7 @@ import (
 
 	if flag.NArg() != 2 {
 		fmt.Fprintf(os.Stderr,
-			"Usage: %s [-with-locking] -o <output.go> <input_directory> <interface>\n",
+			"Usage: %s [-with-locking] [-no-fmt] -o <output.go> <input_directory> <interface>\n",
 			os.Args[0])
 
 		os.Exit(1)
@@ -46,6 +49,24 @@ import (
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
 		os.Exit(1)
+	}
+
+	if !disableFormatting {
+		// Format the generated code
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, "", []byte(stubCode), parser.ParseComments)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing generated code for formatting: %v\n", err)
+			os.Exit(1)
+		}
+
+		var formattedBuf strings.Builder
+		err = format.Node(&formattedBuf, fset, node)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error formatting generated code: %v\n", err)
+			os.Exit(1)
+		}
+		stubCode = formattedBuf.String()
 	}
 
 	if outputFile == "" {
@@ -224,6 +245,67 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 			})
 	}
 
+	// Add fields for call recording and function stubs to the stub struct
+	for _, method := range ifaceData.Methods {
+		// Add MethodNameFunc field (for lambda stubbing)
+		funcType := &ast.FuncType{}
+		params := &ast.FieldList{}
+		for _, p := range method.Params {
+			params.List = append(params.List, &ast.Field{Names: []*ast.Ident{ast.NewIdent(p.Name)}, Type: ast.NewIdent(p.Type)})
+		}
+		funcType.Params = params
+
+		results := &ast.FieldList{}
+		for _, r := range method.Results {
+			results.List = append(results.List, &ast.Field{Type: ast.NewIdent(r.Type)})
+		}
+		funcType.Results = results
+
+		stubStruct.Type.(*ast.StructType).Fields.List = append(
+			stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+				Names: []*ast.Ident{ast.NewIdent(method.Name + "Func")},
+				Type:  funcType,
+			})
+
+		// Add MethodNameCall struct type
+		callStructName := stubName + method.Name + "Call"
+		callStruct := &ast.TypeSpec{
+			Name: ast.NewIdent(callStructName),
+			Type: &ast.StructType{
+				Fields: &ast.FieldList{},
+			},
+		}
+
+		for _, p := range method.Params {
+			callStruct.Type.(*ast.StructType).Fields.List = append(
+				callStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+					Names: []*ast.Ident{ast.NewIdent(p.Name)},
+					Type:  ast.NewIdent(p.Type),
+				})
+		}
+
+		file.Decls = append(file.Decls, &ast.GenDecl{ // Changed from decls = append(decls, ...)
+			Tok:   token.TYPE,
+			Specs: []ast.Spec{callStruct},
+		})
+
+		// Add MethodNameCalls field
+		stubStruct.Type.(*ast.StructType).Fields.List = append(
+			stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+				Names: []*ast.Ident{ast.NewIdent(method.Name + "Calls")},
+				Type:  &ast.ArrayType{Elt: ast.NewIdent(callStructName)},
+			})
+
+		// Add fields for fixed return values
+		for i, res := range method.Results {
+			stubStruct.Type.(*ast.StructType).Fields.List = append(
+				stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+					Names: []*ast.Ident{ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i))},
+					Type:  ast.NewIdent(res.Type),
+				})
+		}
+	}
+
 	// Add type parameters for generic interfaces
 	if len(ifaceData.TypeParams) > 0 {
 		fields := make([]*ast.Field, len(ifaceData.TypeParams))
@@ -236,19 +318,15 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		stubStruct.TypeParams = &ast.FieldList{List: fields}
 	}
 
-	decls := []ast.Decl{
-		&ast.GenDecl{
-			Tok:   token.TYPE,
-			Specs: []ast.Spec{stubStruct},
-		},
-	}
+	file.Decls = append(file.Decls, &ast.GenDecl{ // Changed from decls = append(decls, ...)
+		Tok:   token.TYPE,
+		Specs: []ast.Spec{stubStruct},
+	})
 
 	// Create methods for the stub struct
 	for _, method := range ifaceData.Methods {
-		decls = append(decls, createMethod(stubName, method, ifaceData.TypeParams, opts))
+		file.Decls = append(file.Decls, createMethod(stubName, method, ifaceData.TypeParams, opts)) // Changed from decls = append(decls, ...)
 	}
-
-	file.Decls = decls
 
 	// Generate the code
 	var buf strings.Builder
@@ -306,22 +384,100 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 	if opts.WithLocking {
 		bodyStmts = append(bodyStmts, &ast.ExprStmt{
 			X: &ast.CallExpr{
-				Fun: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu").Sel},
+				Fun: &ast.SelectorExpr{
+					X:   &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")},
+					Sel: ast.NewIdent("Lock"),
+				},
 				Args: nil,
 			},
 		})
 		bodyStmts = append(bodyStmts, &ast.DeferStmt{
 			Call: &ast.CallExpr{
-				Fun: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu").Sel},
+				Fun: &ast.SelectorExpr{
+					X:   &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")},
+					Sel: ast.NewIdent("Unlock"),
+				},
 				Args: nil,
 			},
 		})
 	}
 
-	// Add return statement (for now, just zero values)
-	bodyStmts = append(bodyStmts, &ast.ReturnStmt{})
+	// Add call recording
+	callStructName := stubName + method.Name + "Call"
+	var callElts []ast.Expr
+	for _, p := range method.Params {
+		callElts = append(callElts, &ast.KeyValueExpr{
+			Key:   ast.NewIdent(p.Name),
+			Value: ast.NewIdent(p.Name),
+		})
+	}
+	callInstance := &ast.CompositeLit{
+		Type: ast.NewIdent(callStructName),
+		Elts: callElts,
+	}
 
-	body := &ast.BlockStmt{
+	// Assign the result of append back to the slice
+	bodyStmts = append(bodyStmts, &ast.AssignStmt{
+		Tok: token.ASSIGN,
+		Lhs: []ast.Expr{&ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent(method.Name + "Calls")}},
+		Rhs: []ast.Expr{&ast.CallExpr{
+			Fun: ast.NewIdent("append"),
+			Args: []ast.Expr{
+				&ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent(method.Name + "Calls")},
+				callInstance,
+			},
+		}},
+	})
+
+
+	// Add logic for MethodNameFunc (lambda stubbing) or fixed return values
+	var returnArgs []ast.Expr
+	for i, r := range method.Results {
+		returnArgs = append(returnArgs, &ast.SelectorExpr{
+			X:   ast.NewIdent("s"),
+			Sel: ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i)),
+		})
+	}
+
+	if len(method.Results) > 0 { // Only if the method has return values
+		// if s.MethodNameFunc != nil {
+		ifStmt := &ast.IfStmt{
+			Cond: &ast.BinaryExpr{
+				X:  &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent(method.Name + "Func")},
+				Op: token.NEQ,
+				Y:  ast.NewIdent("nil"),
+			},
+			Body: &ast.BlockStmt{
+				List: []ast.Stmt{
+					// return s.MethodNameFunc(params...)
+					&ast.ReturnStmt{
+						Results: []ast.Expr{
+							&ast.CallExpr{
+								Fun: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent(method.Name + "Func")},
+								Args: func() []ast.Expr {
+									var args []ast.Expr
+									for _, p := range method.Params {
+										args = append(args, ast.NewIdent(p.Name))
+									}
+									return args
+								}(),
+							},
+						},
+					},
+				},
+			},
+			Else: &ast.BlockStmt{
+				List: []ast.Stmt{
+					&ast.ReturnStmt{Results: returnArgs},
+				},
+			},
+		}
+		bodyStmts = append(bodyStmts, ifStmt)
+	} else { // No return values, just add a simple return
+		bodyStmts = append(bodyStmts, &ast.ReturnStmt{})
+	}
+
+	tbody := &ast.BlockStmt{
 		List: bodyStmts,
 	}
 
@@ -332,9 +488,6 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 			Params:  params,
 			Results: results,
 		},
-		Body: body,
+		Body: tbody,
 	}
 }
-
-
-
