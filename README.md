@@ -2,21 +2,18 @@
 
 #### trip-free test stubs
 
-## IN DEVELOPMENT, DO NOT USE YET
-
-toe is a Go tool that automatically generates stub implementations for Go interfaces. It's useful
-for creating test doubles in unit tests - but only stubs, not mocks or fakes.
+`toe` is a Go tool that automatically generates thread-safe stub implementations for Go interfaces. It's useful for creating test doubles in unit tests. It is inspired by `pegomock` but focuses exclusively on stubbing.
 
 ## Features
 
-- Generates stub implementations for any Go interface
-- Records method calls and their parameters
-- Allows setting up return values for stubbed methods
-- Thread-safe
+- Generates stub implementations for any Go interface, **including those with generic type parameters**.
+- **Optional Concurrency Safety**: Stubs can be generated with or without a `sync.Mutex` to help detect race conditions in your code.
+- **Call Recording**: All method calls are recorded, allowing you to assert how many times a method was called and with which parameters.
+- **Flexible Return Values**: You can set up stubbed methods to return specific fixed values or to execute a custom lambda function for more complex logic.
 
 ## Installation
 
-To install toe, use the following command:
+To install `toe`, use the following command:
 
 ```bash
 go get github.com/phildrip/toe
@@ -25,88 +22,118 @@ go get github.com/phildrip/toe
 ## Usage
 
 ```bash
-toe -o <output.go> <input_directory> <interface> 
+toe [flags] <input_directory> <interface>
 ```
 
-- `<input_directory>`: The directory containing the Go file with the interface definition
-- `<interface>`: The name of the interface you want to generate a stub for
-- `-o <output.go>`: (Optional) The output file name. If not provided, the stub code will be printed
-  to stdout
+-   `<input_directory>`: The directory containing the Go file with the interface definition.
+-   `<interface>`: The name of the interface you want to generate a stub for.
+-   `-o <output.go>`: (Optional) The output file name. If not provided, the stub code is printed to stdout.
+-   `-with-locking`: (Optional) If provided, the generated stub will be thread-safe, protected by a `sync.Mutex`.
 
 ### Example
 
 ```bash
-toe . Thinger -o stub_thinger.go
-```
+# Generate a standard stub
+./toe -o ./examples/stub_calculator.go ./examples/calculator Calculator
 
-This command will generate a stub implementation for the Thinger interface defined in the current
-directory and save it to stub_thinger.go.
+# Generate a thread-safe stub with locking
+./toe -with-locking -o ./examples/stub_calculator_safe.go ./examples/calculator Calculator
+```
 
 ## Generated Stub Structure
 
 The generated stub includes:
 
-- A struct to record method calls
-- A main struct implementing the interface
-- Methods to record calls and their parameters
-- ThenReturn methods to set up return values
-- Methods to retrieve recorded calls for assertions in tests
+-   A main `struct` that implements the interface (e.g., `StubCalculator`).
+-   For each method in the interface, the stub contains three fields:
+    -   `MethodNameFunc`: A field to assign a lambda function (`func(...) (...)`) that will be executed when the method is called. This takes precedence over fixed return values.
+    -   `MethodNameCalls`: A slice of structs that records each call to the method and its parameters.
+    -   `MethodNameReturnsX`: Fields that hold fixed return values for the method (e.g., `DoSomethingReturns0`, `DoSomethingReturns1`).
 
 ## Example Usage in Tests
 
-```golang
-stub := &StubThinger{}
-stub.On().ThingThenReturn(nil)
-stub.Thing()
-stub.ThingWithParam(42)
+Given an interface `Calculator`:
 
-// Assert on calls
-calls := stub.ThingCalls()
-if len(calls) != 1 {
-t.Errorf("Expected 1 call to Thing(), got %d", len(calls))
-}
+```go
+// examples/calculator/calculator.go
+package calculator
 
-paramCalls := stub.ThingWithParamCalls()
-if len(paramCalls) != 1 || paramCalls[0].arg1 != 42 {
-t.Errorf("Expected 1 call to ThingWithParam(42), got %+v", paramCalls)
+type Calculator interface {
+	Add(a, b int) int
+	Subtract(a, b int) (int, error)
 }
 ```
 
-## Why another generator?
+A generated stub (`stub_calculator.go`) can be used in tests as follows:
 
-toe keeps things super-simple. It doesn't try to support all the features of mocking libraries
-like [gomock](https://github.com/golang/mock) or [pegomock](https://github.com/petergtz/pegomock).
-It's just a simple tool that generates a stub implementation for a given interface.
+```go
+package calculator_test
 
-By staying simple, toe can fulfill 95% of the use cases I've needed in unit and integration tests -
-but makes those 95% of cases easy. toe doesn't allow you to specify different behaviour for
-different method calls. It also doesn't support method chaining or chaining multiple calls together.
-But it does make stubbing - the ability to define a return value given a method call, and recording
-those calls - easy and quick.
+import (
+	"errors"
+	"testing"
 
-If you need more complex behaviour, you can use a mocking library like gomock or pegomock.
+	"github.com/phildrip/toe/examples"
+)
+
+func TestCalculatorStub(t *testing.T) {
+	stub := &examples.StubCalculator{}
+
+	// --- Test 1: Using fixed return values ---
+	stub.SubtractReturns0 = 10
+	stub.SubtractReturns1 = nil
+
+	result, err := stub.Subtract(20, 10)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result != 10 {
+		t.Errorf("Expected result 10, got %d", result)
+	}
+
+	// Assert that Subtract was called once
+	if len(stub.SubtractCalls) != 1 {
+		t.Errorf("Expected 1 call to Subtract, got %d", len(stub.SubtractCalls))
+	}
+	// Assert on call parameters
+	if stub.SubtractCalls[0].A != 20 || stub.SubtractCalls[0].B != 10 {
+		t.Errorf("Incorrect parameters for Subtract: got %+v", stub.SubtractCalls[0])
+	}
+
+	// --- Test 2: Using a lambda function ---
+	stub.AddFunc = func(a, b int) int {
+		// Custom logic
+		return a*2 + b*2
+	}
+
+	addResult := stub.Add(5, 5)
+	if addResult != 20 { // 5*2 + 5*2 = 20
+		t.Errorf("Expected AddFunc result 20, got %d", addResult)
+	}
+
+	// Assert that Add was called once
+	if len(stub.AddCalls) != 1 {
+		t.Errorf("Expected 1 call to Add, got %d", len(stub.AddCalls))
+	}
+}
+```
 
 ## Building from Source
 
-To build toe from source:
+To build `toe` from source:
 
-1. Clone the repository:
-
-```bash
-git clone https://github.com/phildrip/toe.git
-```
-
-2. Navigate to the project directory:
-
-```bash
-cd toe
-```
-
-3. Build the project:
-
-```bash
-go build
-```
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/phildrip/toe.git
+    ```
+2.  Navigate to the project directory:
+    ```bash
+    cd toe
+    ```
+3.  Build the project:
+    ```bash
+    go build
+    ```
 
 ## License
 
@@ -115,4 +142,3 @@ MIT License
 ## Author
 
 Phil Richards (https://github.com/phildrip)
-
