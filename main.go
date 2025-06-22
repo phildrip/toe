@@ -14,17 +14,20 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-func main() {
 	var outputFile string
-	var disableFormatting bool
-	flag.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
+	var withLocking bool
 
+	flag.BoolVar(&withLocking, "with-locking", false, "include sync.Mutex for concurrency safety")
 	flag.StringVar(&outputFile, "o", "", "output file name")
 	flag.Parse()
 
+	var opts = &StubOptions{
+		WithLocking: withLocking,
+	}
+
 	if flag.NArg() != 2 {
 		fmt.Fprintf(os.Stderr,
-			"Usage: %s [-no-fmt] -o <output.go> <input_directory> <interface>\n",
+			"Usage: %s [-with-locking] -o <output.go> <input_directory> <interface>\n",
 			os.Args[0])
 
 		os.Exit(1)
@@ -39,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	stubCode, err := generateStubCode(interfaceData, disableFormatting)
+	stubCode, err := generateStubCode(interfaceData, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating stub: %v\n", err)
 		os.Exit(1)
@@ -180,11 +183,27 @@ type InterfaceData struct {
 	TypeParams  []ParamData // For generic interfaces, e.g., [T comparable]
 }
 
-func generateStubCode(ifaceData *InterfaceData, disableFormatting bool) (string, error) {
+// StubOptions allows configuring the generated stub behavior.
+type StubOptions struct {
+	WithLocking bool // If true, the stub will include a sync.Mutex for concurrency safety.
+}
+
+
+func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, error) {
 	// Create a new file set and AST file
 	fset := token.NewFileSet()
 	file := &ast.File{
 		Name: ast.NewIdent(ifaceData.PackageName),
+	}
+
+	// Add sync import if locking is enabled
+	if opts.WithLocking {
+		file.Decls = append(file.Decls, &ast.GenDecl{
+			Tok: token.IMPORT,
+			Specs: []ast.Spec{
+				&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"sync"`}},
+			},
+		})
 	}
 
 	// Create the stub struct definition
@@ -194,6 +213,15 @@ func generateStubCode(ifaceData *InterfaceData, disableFormatting bool) (string,
 		Type: &ast.StructType{
 			Fields: &ast.FieldList{},
 		},
+	}
+
+	// Add sync.Mutex field if locking is enabled
+	if opts.WithLocking {
+		stubStruct.Type.(*ast.StructType).Fields.List = append(
+			stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+				Names: []*ast.Ident{ast.NewIdent("mu")},
+				Type:  &ast.SelectorExpr{X: ast.NewIdent("sync"), Sel: ast.NewIdent("Mutex")},
+			})
 	}
 
 	// Add type parameters for generic interfaces
@@ -217,7 +245,7 @@ func generateStubCode(ifaceData *InterfaceData, disableFormatting bool) (string,
 
 	// Create methods for the stub struct
 	for _, method := range ifaceData.Methods {
-		decls = append(decls, createMethod(stubName, method, ifaceData.TypeParams))
+		decls = append(decls, createMethod(stubName, method, ifaceData.TypeParams, opts))
 	}
 
 	file.Decls = decls
@@ -231,7 +259,7 @@ func generateStubCode(ifaceData *InterfaceData, disableFormatting bool) (string,
 	return buf.String(), nil
 }
 
-func createMethod(stubName string, method MethodData, typeParams []ParamData) *ast.FuncDecl {
+func createMethod(stubName string, method MethodData, typeParams []ParamData, opts *StubOptions) *ast.FuncDecl {
 	// Method receiver
 	recv := &ast.FieldList{
 		List: []*ast.Field{
@@ -272,10 +300,29 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData) *a
 	}
 
 	// Method body
+	var bodyStmts []ast.Stmt
+
+	// Add locking if enabled
+	if opts.WithLocking {
+		bodyStmts = append(bodyStmts, &ast.ExprStmt{
+			X: &ast.CallExpr{
+				Fun: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu").Sel},
+				Args: nil,
+			},
+		})
+		bodyStmts = append(bodyStmts, &ast.DeferStmt{
+			Call: &ast.CallExpr{
+				Fun: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu").Sel},
+				Args: nil,
+			},
+		})
+	}
+
+	// Add return statement (for now, just zero values)
+	bodyStmts = append(bodyStmts, &ast.ReturnStmt{})
+
 	body := &ast.BlockStmt{
-		List: []ast.Stmt{
-			&ast.ReturnStmt{},
-		},
+		List: bodyStmts,
 	}
 
 	return &ast.FuncDecl{
