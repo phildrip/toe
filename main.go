@@ -7,10 +7,10 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io"
 	"os"
 	"strings"
-	"go/types"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -18,7 +18,7 @@ import (
 // ParamData represents a parameter or result in a method signature.
 type ParamData struct {
 	Name string
-	Type string // String representation of the type, using type.String()
+	Type types.Type // Store the actual types.Type object
 }
 
 // MethodData represents a method of an interface.
@@ -31,7 +31,7 @@ type MethodData struct {
 // ResultData represents a result in a method signature.
 type ResultData struct {
 	Name string
-	Type string // String representation of the type, using type.String()
+	Type types.Type // Store the actual types.Type object
 }
 
 // InterfaceData represents a parsed interface, including its methods and type parameters.
@@ -40,22 +40,19 @@ type InterfaceData struct {
 	Name        string
 	Methods     []MethodData
 	TypeParams  []ParamData // For generic interfaces, e.g., [T comparable]
+	Imports     map[string]string // map[importPath]packageName
 }
 
-// StubOptions allows configuring the generated stub behavior.
-type StubOptions struct {
-	WithLocking bool // If true, the stub will include a sync.Mutex for concurrency safety.
-}
+// StubOptions is now deprecated as locking is a runtime option.
+type StubOptions struct{}
 
 func run(stdout, stderr io.Writer, args []string) int {
 	var outputFile string
-	var withLocking bool
 	var disableFormatting bool
 
 	fs := flag.NewFlagSet("toe", flag.ContinueOnError)
 	fs.SetOutput(stderr) // Direct flag errors to stderr
 
-	fs.BoolVar(&withLocking, "with-locking", false, "include sync.Mutex for concurrency safety")
 	fs.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
 	fs.StringVar(&outputFile, "o", "", "output file name")
 
@@ -64,13 +61,11 @@ func run(stdout, stderr io.Writer, args []string) int {
 		return 1
 	}
 
-	var opts = &StubOptions{
-		WithLocking: withLocking,
-	}
+	var opts = &StubOptions{}
 
 	if fs.NArg() != 2 {
 		fmt.Fprintf(stderr,
-			"Usage: %s [-with-locking] [-no-fmt] -o <output.go> <input_directory> <interface>\n",
+			"Usage: %s [-no-fmt] -o <output.go> <input_directory> <interface>\n",
 			args[0])
 		return 1
 	}
@@ -93,7 +88,7 @@ func run(stdout, stderr io.Writer, args []string) int {
 	if !disableFormatting {
 		// Format the generated code
 		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, "", []byte(stubCode), parser.ParseComments)
+		node, err := parser.ParseFile(fset, "generated_stub.go", []byte(stubCode), parser.ParseComments)
 		if err != nil {
 			fmt.Fprintf(stderr, "Error parsing generated code for formatting: %v\n", err)
 			return 1
@@ -123,6 +118,48 @@ func run(stdout, stderr io.Writer, args []string) int {
 
 func main() {
 	os.Exit(run(os.Stdout, os.Stderr, os.Args))
+}
+
+// collectImports recursively traverses a types.Type and collects external package imports.
+func collectImports(data *InterfaceData, t types.Type) {
+	switch typ := t.(type) {
+	case *types.Named:
+		if typ.Obj().Pkg() != nil && typ.Obj().Pkg().Path() != data.PackageName {
+			data.Imports[typ.Obj().Pkg().Path()] = typ.Obj().Pkg().Name()
+		}
+		// Also check underlying type, e.g., for struct fields of named types
+		collectImports(data, typ.Underlying())
+	case *types.Pointer:
+		collectImports(data, typ.Elem())
+	case *types.Slice:
+		collectImports(data, typ.Elem())
+	case *types.Array:
+		collectImports(data, typ.Elem())
+	case *types.Map:
+		collectImports(data, typ.Key())
+		collectImports(data, typ.Elem())
+	case *types.Chan:
+		collectImports(data, typ.Elem())
+	case *types.Signature:
+		if typ.Params() != nil {
+			for i := 0; i < typ.Params().Len(); i++ {
+				collectImports(data, typ.Params().At(i).Type())
+			}
+		}
+		if typ.Results() != nil {
+			for i := 0; i < typ.Results().Len(); i++ {
+				collectImports(data, typ.Results().At(i).Type())
+			}
+		}
+	case *types.Basic:
+		// Basic types do not have associated packages.
+	case *types.Interface:
+		// Interface types themselves might not directly reference packages unless embedded named types.
+		// Handled by recursive calls to collectImports on method signatures.
+	case *types.TypeParam:
+		// Type parameters themselves don't directly reference packages, but their constraints might.
+		collectImports(data, typ.Constraint())
+	}
 }
 
 func findInterface(inputDir string, interfaceName string) (*InterfaceData, error) {
@@ -159,12 +196,16 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 		namedType, isNamed := obj.Type().(*types.Named)
 
 		if foundInterface != nil {
-			return nil, fmt.Errorf("found duplicate interface %s in package %s and %s", interfaceName, foundInterface.PackageName, pkg.Name)
+			return nil, fmt.Errorf("found duplicate interface %s in package %s and %s",
+				interfaceName,
+				foundInterface.PackageName,
+				pkg.Name)
 		}
 
 		data := &InterfaceData{
 			PackageName: pkg.Name,
 			Name:        interfaceName,
+			Imports:     make(map[string]string),
 		}
 
 		// Handle generic interfaces
@@ -173,8 +214,9 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 				tp := namedType.TypeParams().At(i)
 				data.TypeParams = append(data.TypeParams, ParamData{
 					Name: tp.Obj().Name(),
-					Type: tp.Constraint().String(), // Use Constraint().String() to get the actual constraint type string
+					Type: tp.Constraint(), // Store types.Type directly
 				})
+				collectImports(data, tp.Constraint())
 			}
 		}
 
@@ -192,8 +234,9 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 					param := sig.Params().At(j)
 					methodData.Params = append(methodData.Params, ParamData{
 						Name: param.Name(),
-						Type: param.Type().String(),
+						Type: param.Type(), // Store types.Type directly
 					})
+					collectImports(data, param.Type())
 				}
 			}
 
@@ -207,8 +250,9 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 					}
 					methodData.Results = append(methodData.Results, ResultData{
 						Name: name,
-						Type: result.Type().String(),
+						Type: result.Type(), // Store types.Type directly
 					})
+					collectImports(data, result.Type())
 				}
 			}
 			data.Methods = append(data.Methods, methodData)
@@ -223,6 +267,84 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 	return foundInterface, nil
 }
 
+// typeToExpr converts a types.Type to an ast.Expr, handling package imports.
+func typeToExpr(t types.Type, currentPackageName string, imports map[string]string) ast.Expr {
+	switch typ := t.(type) {
+	case *types.Basic:
+		return ast.NewIdent(typ.Name())
+	case *types.Named:
+		// If the named type belongs to an external package, use a selector expression
+		if typ.Obj().Pkg() != nil && typ.Obj().Pkg().Path() != currentPackageName {
+			// Check if we collected an alias for this package
+			pkgName, ok := imports[typ.Obj().Pkg().Path()]
+			if !ok {
+				pkgName = typ.Obj().Pkg().Name() // Fallback to actual package name
+			}
+			return &ast.SelectorExpr{
+				X:   ast.NewIdent(pkgName),
+				Sel: ast.NewIdent(typ.Obj().Name()),
+			}
+		}
+		// Otherwise, it's a type in the current package or a predeclared type
+		return ast.NewIdent(typ.Obj().Name())
+	case *types.Pointer:
+		return &ast.StarExpr{X: typeToExpr(typ.Elem(), currentPackageName, imports)}
+	case *types.Slice:
+		return &ast.ArrayType{Elt: typeToExpr(typ.Elem(), currentPackageName, imports)}
+	case *types.Array:
+		return &ast.ArrayType{Len: &ast.BasicLit{Kind: token.INT, Value: fmt.Sprintf("%d", typ.Len())}, Elt: typeToExpr(typ.Elem(), currentPackageName, imports)}
+	case *types.Map:
+		return &ast.MapType{Key: typeToExpr(typ.Key(), currentPackageName, imports), Value: typeToExpr(typ.Elem(), currentPackageName, imports)}
+	case *types.Chan:
+		return &ast.ChanType{Dir: ast.ChanDir(typ.Dir()), Value: typeToExpr(typ.Elem(), currentPackageName, imports)}
+	case *types.Signature:
+		// This case is for function types (e.g., func(...) (...))
+		params := &ast.FieldList{}
+		if typ.Params() != nil {
+			for i := 0; i < typ.Params().Len(); i++ {
+				param := typ.Params().At(i)
+				paramNames := []*ast.Ident{}
+				if param.Name() != "" {
+					paramNames = append(paramNames, ast.NewIdent(param.Name()))
+				}
+				params.List = append(params.List, &ast.Field{
+					Names: paramNames,
+					Type:  typeToExpr(param.Type(), currentPackageName, imports),
+				})
+			}
+		}
+
+		results := &ast.FieldList{}
+		if typ.Results() != nil {
+			for i := 0; i < typ.Results().Len(); i++ {
+				result := typ.Results().At(i)
+				resultNames := []*ast.Ident{}
+				if result.Name() != "" {
+					resultNames = append(resultNames, ast.NewIdent(result.Name()))
+				}
+				results.List = append(results.List, &ast.Field{
+					Names: resultNames,
+					Type:  typeToExpr(result.Type(), currentPackageName, imports),
+				})
+			}
+		}
+		return &ast.FuncType{Params: params, Results: results}
+	case *types.Interface:
+		// If it's the empty interface, return an empty interface literal
+		if typ.Empty() {
+			return &ast.InterfaceType{Methods: &ast.FieldList{}} // represents interface{}
+		}
+		// For other interfaces, fall back to its string representation
+		return ast.NewIdent(typ.String())
+
+	case *types.TypeParam:
+		return ast.NewIdent(typ.Obj().Name())
+	default:
+		// Fallback for types not explicitly handled (e.g., complex structs, unexported types)
+		return ast.NewIdent(typ.String())
+	}
+}
+
 func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, error) {
 	// Create a new file set and AST file
 	fset := token.NewFileSet()
@@ -230,15 +352,30 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		Name: ast.NewIdent(ifaceData.PackageName),
 	}
 
-	// Add sync import if locking is enabled
-	if opts.WithLocking {
-		file.Decls = append(file.Decls, &ast.GenDecl{
-			Tok: token.IMPORT,
-			Specs: []ast.Spec{
-				&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"sync"`}},
-			},
+	// Add collected imports
+	importSpecs := []ast.Spec{ // Always import sync for the mutex
+		&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"sync"`}},
+	}
+	for path, name := range ifaceData.Imports {
+		var importName *ast.Ident
+		// Only add name if it's different from the last part of the path or if it's explicitly needed
+		lastSlash := strings.LastIndex(path, "/")
+		lastPart := path
+		if lastSlash != -1 {
+			lastPart = path[lastSlash+1:]
+		}
+		if name != lastPart {
+			importName = ast.NewIdent(name)
+		}
+		importSpecs = append(importSpecs, &ast.ImportSpec{
+			Name: importName,
+			Path: &ast.BasicLit{Kind: token.STRING, Value: fmt.Sprintf("%q", path)},
 		})
 	}
+	file.Decls = append(file.Decls, &ast.GenDecl{
+		Tok:   token.IMPORT,
+		Specs: importSpecs,
+	})
 
 	// Create the stub struct definition
 	stubName := "Stub" + ifaceData.Name
@@ -249,14 +386,17 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		},
 	}
 
-	// Add sync.Mutex field if locking is enabled
-	if opts.WithLocking {
-		stubStruct.Type.(*ast.StructType).Fields.List = append(
-			stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
-				Names: []*ast.Ident{ast.NewIdent("mu")},
-				Type:  &ast.SelectorExpr{X: ast.NewIdent("sync"), Sel: ast.NewIdent("Mutex")},
-			})
-	}
+	// Add sync.Mutex and _isLocked fields
+	stubStruct.Type.(*ast.StructType).Fields.List = append(
+		stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+			Names: []*ast.Ident{ast.NewIdent("mu")},
+			Type:  &ast.SelectorExpr{X: ast.NewIdent("sync"), Sel: ast.NewIdent("Mutex")},
+		},
+		&ast.Field{
+			Names: []*ast.Ident{ast.NewIdent("_isLocked")},
+			Type:  ast.NewIdent("bool"),
+		},
+	)
 
 	// Add fields for call recording and function stubs to the stub struct
 	for _, method := range ifaceData.Methods {
@@ -264,13 +404,18 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		funcType := &ast.FuncType{}
 		params := &ast.FieldList{}
 		for _, p := range method.Params {
-			params.List = append(params.List, &ast.Field{Names: []*ast.Ident{ast.NewIdent(p.Name)}, Type: ast.NewIdent(p.Type)})
+			params.List = append(params.List, &ast.Field{
+				Names: []*ast.Ident{ast.NewIdent(p.Name)},
+				Type:  typeToExpr(p.Type, ifaceData.PackageName, ifaceData.Imports),
+			})
 		}
 		funcType.Params = params
 
 		results := &ast.FieldList{}
 		for _, r := range method.Results {
-			results.List = append(results.List, &ast.Field{Type: ast.NewIdent(r.Type)})
+			results.List = append(results.List, &ast.Field{
+				Type: typeToExpr(r.Type, ifaceData.PackageName, ifaceData.Imports),
+			})
 		}
 		funcType.Results = results
 
@@ -291,14 +436,14 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 
 		// Add type parameters to call struct if the main struct is generic
 		if len(ifaceData.TypeParams) > 0 {
-			callStruct.TypeParams = &ast.FieldList{List: copyTypeParams(ifaceData.TypeParams)}
+			callStruct.TypeParams = &ast.FieldList{List: copyTypeParams(ifaceData.TypeParams, ifaceData.PackageName, ifaceData.Imports)}
 		}
 
 		for _, p := range method.Params {
 			callStruct.Type.(*ast.StructType).Fields.List = append(
 				callStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
 					Names: []*ast.Ident{ast.NewIdent(p.Name)},
-					Type:  ast.NewIdent(p.Type),
+					Type:  typeToExpr(p.Type, ifaceData.PackageName, ifaceData.Imports),
 				})
 		}
 
@@ -332,7 +477,7 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 			stubStruct.Type.(*ast.StructType).Fields.List = append(
 				stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
 					Names: []*ast.Ident{ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i))},
-					Type:  ast.NewIdent(res.Type),
+					Type:  typeToExpr(res.Type, ifaceData.PackageName, ifaceData.Imports),
 				})
 		}
 	}
@@ -343,10 +488,10 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		for i, tp := range ifaceData.TypeParams {
 			// Determine the AST representation of the type parameter's constraint
 			var constraintType ast.Expr
-			if tp.Type == "interface{}" {
+			if tp.Type.String() == "interface{}" { // Now using .String() on types.Type
 				constraintType = &ast.InterfaceType{Methods: &ast.FieldList{}} // Represents 'interface{}'
 			} else {
-				constraintType = ast.NewIdent(tp.Type)
+				constraintType = typeToExpr(tp.Type, ifaceData.PackageName, ifaceData.Imports)
 			}
 
 			fields[i] = &ast.Field{
@@ -362,9 +507,12 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		Specs: []ast.Spec{stubStruct},
 	})
 
+	// Create constructor
+	file.Decls = append(file.Decls, createConstructor(stubName, ifaceData.TypeParams, ifaceData.PackageName, ifaceData.Imports))
+
 	// Create methods for the stub struct
 	for _, method := range ifaceData.Methods {
-		file.Decls = append(file.Decls, createMethod(stubName, method, ifaceData.TypeParams, opts)) // Changed from decls = append(decls, ...)
+		file.Decls = append(file.Decls, createMethod(stubName, method, ifaceData.TypeParams, ifaceData.PackageName, ifaceData.Imports))
 	}
 
 	// Generate the code
@@ -378,14 +526,14 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 
 // copyTypeParams creates a new slice of ast.Field representing type parameters.
 // It's used to safely copy type parameters for nested generic structs.
-func copyTypeParams(params []ParamData) []*ast.Field {
+func copyTypeParams(params []ParamData, currentPackageName string, imports map[string]string) []*ast.Field {
 	copied := make([]*ast.Field, len(params))
 	for i, p := range params {
 		var constraintType ast.Expr
-		if p.Type == "interface{}" {
+		if p.Type.String() == "interface{}" {
 			constraintType = &ast.InterfaceType{Methods: &ast.FieldList{}}
 		} else {
-			constraintType = ast.NewIdent(p.Type)
+			constraintType = typeToExpr(p.Type, currentPackageName, imports) // Use typeToExpr here
 		}
 		copied[i] = &ast.Field{
 			Names: []*ast.Ident{ast.NewIdent(p.Name)},
@@ -395,7 +543,57 @@ func copyTypeParams(params []ParamData) []*ast.Field {
 	return copied
 }
 
-func createMethod(stubName string, method MethodData, typeParams []ParamData, opts *StubOptions) *ast.FuncDecl {
+func createConstructor(stubName string, typeParams []ParamData, currentPackageName string, imports map[string]string) *ast.FuncDecl {
+	constructorName := "New" + stubName
+	withLockingParam := &ast.Field{Names: []*ast.Ident{ast.NewIdent("withLocking")}, Type: ast.NewIdent("bool")}
+
+	// Build receiver type for the constructor
+	var resultType ast.Expr = ast.NewIdent(stubName)
+
+	// Type parameters for the constructor function itself
+	var funcTypeParams *ast.FieldList
+	if len(typeParams) > 0 {
+		funcTypeParams = &ast.FieldList{List: copyTypeParams(typeParams, currentPackageName, imports)}
+
+		var typeArgs []ast.Expr
+		for _, tp := range typeParams {
+			typeArgs = append(typeArgs, ast.NewIdent(tp.Name))
+		}
+		if len(typeArgs) == 1 {
+			resultType = &ast.IndexExpr{X: ast.NewIdent(stubName), Index: typeArgs[0]}
+		} else {
+			resultType = &ast.IndexListExpr{X: ast.NewIdent(stubName), Indices: typeArgs}
+		}
+	}
+
+	return &ast.FuncDecl{
+		Name: ast.NewIdent(constructorName),
+		Type: &ast.FuncType{
+			TypeParams: funcTypeParams, // Add type parameters to the function declaration
+			Params:     &ast.FieldList{List: []*ast.Field{withLockingParam}},
+			Results:    &ast.FieldList{List: []*ast.Field{{Type: &ast.StarExpr{X: resultType}}}},
+		},
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						&ast.UnaryExpr{
+							Op: token.AND,
+							X: &ast.CompositeLit{
+								Type: resultType,
+								Elts: []ast.Expr{
+									&ast.KeyValueExpr{Key: ast.NewIdent("_isLocked"), Value: ast.NewIdent("withLocking")},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func createMethod(stubName string, method MethodData, typeParams []ParamData, currentPackageName string, imports map[string]string) *ast.FuncDecl {
 	// Method receiver
 	recv := &ast.FieldList{
 		List: []*ast.Field{
@@ -433,39 +631,41 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 	// Method parameters
 	params := &ast.FieldList{}
 	for _, p := range method.Params {
-		params.List = append(params.List, &ast.Field{Names: []*ast.Ident{ast.NewIdent(p.Name)}, Type: ast.NewIdent(p.Type)})
+		params.List = append(params.List, &ast.Field{
+			Names: []*ast.Ident{ast.NewIdent(p.Name)},
+			Type:  typeToExpr(p.Type, currentPackageName, imports),
+		})
 	}
 
 	// Method results
 	results := &ast.FieldList{}
 	for _, r := range method.Results {
-		results.List = append(results.List, &ast.Field{Type: ast.NewIdent(r.Type)})
+		results.List = append(results.List, &ast.Field{
+			Type: typeToExpr(r.Type, currentPackageName, imports),
+		})
 	}
 
 	// Method body
 	var bodyStmts []ast.Stmt
 
-	// Add locking if enabled
-	if opts.WithLocking {
-		bodyStmts = append(bodyStmts, &ast.ExprStmt{
-			X: &ast.CallExpr{
-				Fun: &ast.SelectorExpr{
-					X:   &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")},
-					Sel: ast.NewIdent("Lock"),
+	// Add conditional locking
+	bodyStmts = append(bodyStmts, &ast.IfStmt{
+		Cond: ast.NewIdent("s._isLocked"),
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.ExprStmt{
+					X: &ast.CallExpr{
+						Fun: &ast.SelectorExpr{X: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")}, Sel: ast.NewIdent("Lock")},
+					},
 				},
-				Args: nil,
-			},
-		})
-		bodyStmts = append(bodyStmts, &ast.DeferStmt{
-			Call: &ast.CallExpr{
-				Fun: &ast.SelectorExpr{
-					X:   &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")},
-					Sel: ast.NewIdent("Unlock"),
+				&ast.DeferStmt{
+					Call: &ast.CallExpr{
+						Fun: &ast.SelectorExpr{X: &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent("mu")}, Sel: ast.NewIdent("Unlock")},
+					},
 				},
-				Args: nil,
 			},
-		})
-	}
+		},
+	})
 
 	// Add call recording
 	callStructName := stubName + method.Name + "Call"
@@ -473,7 +673,7 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 	for _, p := range method.Params {
 		callElts = append(callElts, &ast.KeyValueExpr{
 			Key:   ast.NewIdent(p.Name),
-			Value: ast.NewIdent(p.Name),
+			Value: ast.NewIdent(p.Name), // Use p.Name for the value of KeyValueExpr
 		})
 	}
 
@@ -543,7 +743,7 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, op
 								Args: func() []ast.Expr {
 									var args []ast.Expr
 									for _, p := range method.Params {
-										args = append(args, ast.NewIdent(p.Name))
+										args = append(args, ast.NewIdent(p.Name)) // Use p.Name for the argument
 									}
 									return args
 								}(),

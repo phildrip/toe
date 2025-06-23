@@ -14,7 +14,6 @@ type TestCase struct {
 	Name          string
 	InputFile     string
 	InterfaceName string
-	Options       *StubOptions
 	GoldenFile    string
 }
 
@@ -22,32 +21,16 @@ func TestGenerateStub(t *testing.T) {
 	// Define test cases
 	testCases := []TestCase{
 		{
-			Name:          "simple_unlocked",
+			Name:          "simple",
 			InputFile:     filepath.Join("testdata", "input", "simple"),
 			InterfaceName: "MyInterface",
-			Options:       &StubOptions{WithLocking: false},
-			GoldenFile:    filepath.Join("testdata", "golden", "simple_unlocked.go"),
+			GoldenFile:    filepath.Join("testdata", "golden", "simple.go"),
 		},
 		{
-			Name:          "simple_locked",
-			InputFile:     filepath.Join("testdata", "input", "simple"),
-			InterfaceName: "MyInterface",
-			Options:       &StubOptions{WithLocking: true},
-			GoldenFile:    filepath.Join("testdata", "golden", "simple_locked.go"),
-		},
-		{
-			Name:          "generic_unlocked",
+			Name:          "generic",
 			InputFile:     filepath.Join("testdata", "input", "generic"),
 			InterfaceName: "GenericInterface",
-			Options:       &StubOptions{WithLocking: false},
-			GoldenFile:    filepath.Join("testdata", "golden", "generic_unlocked.go"),
-		},
-		{
-			Name:          "generic_locked",
-			InputFile:     filepath.Join("testdata", "input", "generic"),
-			InterfaceName: "GenericInterface",
-			Options:       &StubOptions{WithLocking: true},
-			GoldenFile:    filepath.Join("testdata", "golden", "generic_locked.go"),
+			GoldenFile:    filepath.Join("testdata", "golden", "generic.go"),
 		},
 	}
 
@@ -57,18 +40,12 @@ func TestGenerateStub(t *testing.T) {
 			outputFilePath := filepath.Join(t.TempDir(), "generated_stub.go")
 
 			// Prepare arguments for the run function
-			args := []string{"toe", "-o", outputFilePath}
-			if tc.Options.WithLocking {
-				args = append(args, "-with-locking")
-			}
-			args = append(args, tc.InputFile, tc.InterfaceName)
+			args := []string{"toe", "-o", outputFilePath, tc.InputFile, tc.InterfaceName}
 
 			// Capture stdout/stderr
 			var outBuffer, errBuffer bytes.Buffer
 
 			// Run the main logic through the run() function
-			// The `run` function in main.go is now exported as `Run`.
-			// So, we need to call `Run` here.
 			exitCode := run(&outBuffer, &errBuffer, args)
 			if exitCode != 0 {
 				t.Fatalf("toe exited with non-zero status: %d\nStderr: %s", exitCode, errBuffer.String())
