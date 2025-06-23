@@ -1,4 +1,4 @@
-package simple
+package customstubs
 
 import "sync"
 

@@ -27,7 +27,7 @@ func TestCalculatorStub(t *testing.T) {
 	if len(stub.SubtractCalls) != 1 {
 		t.Errorf("Expected 1 call to Subtract, got %d", len(stub.SubtractCalls))
 	}
-	// Assert on call parameters
+	// Assert on call parameters - now public fields A and B
 	if stub.SubtractCalls[0].A != 20 || stub.SubtractCalls[0].B != 10 {
 		t.Errorf("Incorrect parameters for Subtract: got %+v", stub.SubtractCalls[0])
 	}
