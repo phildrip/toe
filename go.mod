@@ -1,4 +1,4 @@
-module toe
+module github.com/phildrip/toe
 
 go 1.24.0
 
