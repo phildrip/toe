@@ -3,13 +3,13 @@ package simple
 import "sync"
 
 type StubMyInterfaceCalculateCall struct {
-	x int
-	y int
+	X int
+	Y int
 }
 type StubMyInterfaceGetValueCall struct {
 }
 type StubMyInterfaceSetValueCall struct {
-	val string
+	Val string
 }
 type StubMyInterface struct {
 	mu                sync.Mutex
@@ -33,7 +33,7 @@ func (s *StubMyInterface) Calculate(x int, y int) (int, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	s.CalculateCalls = append(s.CalculateCalls, StubMyInterfaceCalculateCall{x: x, y: y})
+	s.CalculateCalls = append(s.CalculateCalls, StubMyInterfaceCalculateCall{X: x, Y: y})
 	if s.CalculateFunc != nil {
 		return s.CalculateFunc(x, y)
 	} else {
@@ -57,6 +57,6 @@ func (s *StubMyInterface) SetValue(val string) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	s.SetValueCalls = append(s.SetValueCalls, StubMyInterfaceSetValueCall{val: val})
+	s.SetValueCalls = append(s.SetValueCalls, StubMyInterfaceSetValueCall{Val: val})
 	return
 }

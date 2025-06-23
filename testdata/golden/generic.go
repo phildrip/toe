@@ -3,7 +3,7 @@ package generic
 import "sync"
 
 type StubGenericInterfaceDoCall[T any] struct {
-	value T
+	Value T
 }
 type StubGenericInterfaceGetCall[T any] struct {
 }
@@ -27,7 +27,7 @@ func (s *StubGenericInterface[T]) Do(value T) (T, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	s.DoCalls = append(s.DoCalls, StubGenericInterfaceDoCall[T]{value: value})
+	s.DoCalls = append(s.DoCalls, StubGenericInterfaceDoCall[T]{Value: value})
 	if s.DoFunc != nil {
 		return s.DoFunc(value)
 	} else {

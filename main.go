@@ -48,12 +48,12 @@ type StubOptions struct{}
 
 func run(stdout, stderr io.Writer, args []string) int {
 	var outputFile string
-	var disableFormatting bool
+	var testPackage bool
 
 	fs := flag.NewFlagSet("toe", flag.ContinueOnError)
 	fs.SetOutput(stderr) // Direct flag errors to stderr
 
-	fs.BoolVar(&disableFormatting, "no-fmt", false, "disable formatting of the output")
+	fs.BoolVar(&testPackage, "test-package", false, "generate stub in a _test package")
 	fs.StringVar(&outputFile, "o", "", "output file name")
 
 	// Parse command-line arguments, excluding the program name
@@ -65,7 +65,7 @@ func run(stdout, stderr io.Writer, args []string) int {
 
 	if fs.NArg() != 2 {
 		fmt.Fprintf(stderr,
-			"Usage: %s [-no-fmt] -o <output.go> <input_directory> <interface>\n",
+			"Usage: %s [-test-package] -o <output.go> <input_directory> <interface>\n",
 			args[0])
 		return 1
 	}
@@ -73,7 +73,7 @@ func run(stdout, stderr io.Writer, args []string) int {
 	inputDir := fs.Arg(0)
 	interfaceName := fs.Arg(1)
 
-	interfaceData, err := findInterface(inputDir, interfaceName)
+	interfaceData, err := findInterface(inputDir, interfaceName, testPackage)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error finding interface: %v\n", err)
 		return 1
@@ -85,23 +85,21 @@ func run(stdout, stderr io.Writer, args []string) int {
 		return 1
 	}
 
-	if !disableFormatting {
-		// Format the generated code
-		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, "generated_stub.go", []byte(stubCode), parser.ParseComments)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error parsing generated code for formatting: %v\n", err)
-			return 1
-		}
-
-		var formattedBuf strings.Builder
-		err = format.Node(&formattedBuf, fset, node)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error formatting generated code: %v\n", err)
-			return 1
-		}
-		stubCode = formattedBuf.String()
+	// Format the generated code
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "generated_stub.go", []byte(stubCode), parser.ParseComments)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error parsing generated code for formatting: %v\n", err)
+		return 1
 	}
+
+	var formattedBuf strings.Builder
+	err = format.Node(&formattedBuf, fset, node)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error formatting generated code: %v\n", err)
+		return 1
+	}
+	stubCode = formattedBuf.String()
 
 	if outputFile == "" {
 		fmt.Fprintln(stdout, stubCode)
@@ -162,7 +160,7 @@ func collectImports(data *InterfaceData, t types.Type) {
 	}
 }
 
-func findInterface(inputDir string, interfaceName string) (*InterfaceData, error) {
+func findInterface(inputDir string, interfaceName string, testPackage bool) (*InterfaceData, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName |
 			packages.NeedFiles |
@@ -206,6 +204,10 @@ func findInterface(inputDir string, interfaceName string) (*InterfaceData, error
 			PackageName: pkg.Name,
 			Name:        interfaceName,
 			Imports:     make(map[string]string),
+		}
+
+		if testPackage {
+			data.PackageName += "_test"
 		}
 
 		// Handle generic interfaces
@@ -442,7 +444,7 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 		for _, p := range method.Params {
 			callStruct.Type.(*ast.StructType).Fields.List = append(
 				callStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
-					Names: []*ast.Ident{ast.NewIdent(p.Name)},
+					Names: []*ast.Ident{ast.NewIdent(strings.Title(p.Name))},
 					Type:  typeToExpr(p.Type, ifaceData.PackageName, ifaceData.Imports),
 				})
 		}
@@ -672,8 +674,8 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, cu
 	var callElts []ast.Expr
 	for _, p := range method.Params {
 		callElts = append(callElts, &ast.KeyValueExpr{
-			Key:   ast.NewIdent(p.Name),
-			Value: ast.NewIdent(p.Name), // Use p.Name for the value of KeyValueExpr
+			Key:   ast.NewIdent(strings.Title(p.Name)), // Capitalize key for public field
+			Value: ast.NewIdent(p.Name),
 		})
 	}
 
