@@ -28,12 +28,22 @@ toe [flags] <input_directory> <interface>
 -   `<input_directory>`: The directory containing the Go file with the interface definition.
 -   `<interface>`: The name of the interface you want to generate a stub for.
 -   `-o <output.go>`: (Optional) The output file name. If not provided, the stub code is printed to stdout.
+-   `-test-package`: (Optional) If provided, the generated stub will be in a `_test` package (e.g., `package mypackage_test`).
+-   `-stub-dir <dir>`: (Optional) Generate the stub in a specific subdirectory (e.g., `stubs`) and use its base name as the package name (e.g., `package stubs`). This flag is incompatible with `-test-package` if the generated package name would conflict. 
 
 ### Example
 
 ```bash
 # Generate a standard stub file for the Calculator interface
 ./toe -o ./examples/stub_calculator.go ./examples/calculator Calculator
+
+# Generate a stub in a _test package
+./toe -test-package -o ./examples/stub_calculator_test.go ./examples/calculator Calculator
+
+# Generate a stub in a 'stubs' subdirectory, with 'stubs' as the package name
+# (You might need to create the 'stubs' directory first)
+./toe -stub-dir stubs -o ./examples/stubs/stub_calculator.go ./examples/calculator Calculator
+```
 ```
 
 ## Generated Stub Structure
