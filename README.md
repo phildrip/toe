@@ -44,7 +44,6 @@ toe [flags] <input_directory> <interface>
 # (You might need to create the 'stubs' directory first)
 ./toe -stub-dir stubs -o ./examples/stubs/stub_calculator.go ./examples/calculator Calculator
 ```
-```
 
 ## Generated Stub Structure
 
