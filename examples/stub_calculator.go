@@ -3,12 +3,12 @@ package calculator
 import "sync"
 
 type StubCalculatorAddCall struct {
-	a int
-	b int
+	A int
+	B int
 }
 type StubCalculatorSubtractCall struct {
-	a int
-	b int
+	A int
+	B int
 }
 type StubCalculator struct {
 	mu               sync.Mutex
@@ -30,7 +30,7 @@ func (s *StubCalculator) Add(a int, b int) int {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	s.AddCalls = append(s.AddCalls, StubCalculatorAddCall{a: a, b: b})
+	s.AddCalls = append(s.AddCalls, StubCalculatorAddCall{A: a, B: b})
 	if s.AddFunc != nil {
 		return s.AddFunc(a, b)
 	} else {
@@ -42,7 +42,7 @@ func (s *StubCalculator) Subtract(a int, b int) (int, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	s.SubtractCalls = append(s.SubtractCalls, StubCalculatorSubtractCall{a: a, b: b})
+	s.SubtractCalls = append(s.SubtractCalls, StubCalculatorSubtractCall{A: a, B: b})
 	if s.SubtractFunc != nil {
 		return s.SubtractFunc(a, b)
 	} else {
