@@ -504,14 +504,59 @@ func generateStubCode(ifaceData *InterfaceData, opts *StubOptions) (string, erro
 				Type:  &ast.ArrayType{Elt: callListType},
 			})
 
-		// Add fields for fixed return values
-		for i, res := range method.Results {
+		// Add MethodNameReturns struct type and its field
+		if len(method.Results) > 0 {
+			returnsStructName := stubName + method.Name + "Returns"
+			returnsStruct := &ast.TypeSpec{
+				Name: ast.NewIdent(returnsStructName),
+				Type: &ast.StructType{
+					Fields: &ast.FieldList{},
+				},
+			}
+
+			// Add type parameters to returns struct if the main struct is generic
+			if len(ifaceData.TypeParams) > 0 {
+				returnsStruct.TypeParams = &ast.FieldList{List: copyTypeParams(ifaceData.TypeParams, ifaceData.PackageName, ifaceData.Imports)}
+			}
+
+			for i, res := range method.Results {
+				fieldName := fmt.Sprintf("R%d", i) // Default name for unnamed results
+				if res.Name != "" {
+					fieldName = strings.Title(res.Name) // Use original name if provided and capitalized
+				}
+				returnsStruct.Type.(*ast.StructType).Fields.List = append(
+					returnsStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
+						Names: []*ast.Ident{ast.NewIdent(fieldName)},
+						Type:  typeToExpr(res.Type, ifaceData.PackageName, ifaceData.Imports),
+					})
+			}
+
+			file.Decls = append(file.Decls, &ast.GenDecl{
+				Tok:   token.TYPE,
+				Specs: []ast.Spec{returnsStruct},
+			})
+
+			// Add MethodNameReturns field to the stub struct
+			var returnsFieldType ast.Expr = ast.NewIdent(returnsStructName)
+			if len(ifaceData.TypeParams) > 0 {
+				var typeArgs []ast.Expr
+				for _, tp := range ifaceData.TypeParams {
+					typeArgs = append(typeArgs, ast.NewIdent(tp.Name))
+				}
+				if len(typeArgs) == 1 {
+					returnsFieldType = &ast.IndexExpr{X: ast.NewIdent(returnsStructName), Index: typeArgs[0]}
+				} else {
+					returnsFieldType = &ast.IndexListExpr{X: ast.NewIdent(returnsStructName), Indices: typeArgs}
+				}
+			}
+
 			stubStruct.Type.(*ast.StructType).Fields.List = append(
 				stubStruct.Type.(*ast.StructType).Fields.List, &ast.Field{
-					Names: []*ast.Ident{ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i))},
-					Type:  typeToExpr(res.Type, ifaceData.PackageName, ifaceData.Imports),
+					Names: []*ast.Ident{ast.NewIdent(method.Name + "Returns")},
+					Type:  returnsFieldType,
 				})
 		}
+
 	}
 
 	// Add type parameters for generic interfaces
@@ -750,11 +795,17 @@ func createMethod(stubName string, method MethodData, typeParams []ParamData, cu
 
 	// Add logic for MethodNameFunc (lambda stubbing) or fixed return values
 	var returnArgs []ast.Expr
-	for i := range method.Results {
-		returnArgs = append(returnArgs, &ast.SelectorExpr{
-			X:   ast.NewIdent("s"),
-			Sel: ast.NewIdent(fmt.Sprintf("%sReturns%d", method.Name, i)),
-		})
+	if len(method.Results) > 0 {
+		for i, res := range method.Results {
+			fieldName := fmt.Sprintf("R%d", i) // Default name for unnamed results
+			if res.Name != "" {
+				fieldName = strings.Title(res.Name) // Use original name if provided and capitalized
+			}
+			returnArgs = append(returnArgs, &ast.SelectorExpr{
+				X:   &ast.SelectorExpr{X: ast.NewIdent("s"), Sel: ast.NewIdent(method.Name + "Returns")},
+				Sel: ast.NewIdent(fieldName),
+			})
+		}
 	}
 
 	if len(method.Results) > 0 { // Only if the method has return values

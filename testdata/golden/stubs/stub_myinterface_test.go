@@ -6,23 +6,29 @@ type StubMyInterfaceCalculateCall struct {
 	X int
 	Y int
 }
+type StubMyInterfaceCalculateReturns struct {
+	R0 int
+	R1 error
+}
 type StubMyInterfaceGetValueCall struct {
+}
+type StubMyInterfaceGetValueReturns struct {
+	R0 string
 }
 type StubMyInterfaceSetValueCall struct {
 	Val string
 }
 type StubMyInterface struct {
-	mu                sync.Mutex
-	_isLocked         bool
-	CalculateFunc     func(x int, y int) (int, error)
-	CalculateCalls    []StubMyInterfaceCalculateCall
-	CalculateReturns0 int
-	CalculateReturns1 error
-	GetValueFunc      func() string
-	GetValueCalls     []StubMyInterfaceGetValueCall
-	GetValueReturns0  string
-	SetValueFunc      func(val string)
-	SetValueCalls     []StubMyInterfaceSetValueCall
+	mu               sync.Mutex
+	_isLocked        bool
+	CalculateFunc    func(x int, y int) (int, error)
+	CalculateCalls   []StubMyInterfaceCalculateCall
+	CalculateReturns StubMyInterfaceCalculateReturns
+	GetValueFunc     func() string
+	GetValueCalls    []StubMyInterfaceGetValueCall
+	GetValueReturns  StubMyInterfaceGetValueReturns
+	SetValueFunc     func(val string)
+	SetValueCalls    []StubMyInterfaceSetValueCall
 }
 
 func NewStubMyInterface(withLocking bool) *StubMyInterface {
@@ -37,7 +43,7 @@ func (s *StubMyInterface) Calculate(x int, y int) (int, error) {
 	if s.CalculateFunc != nil {
 		return s.CalculateFunc(x, y)
 	} else {
-		return s.CalculateReturns0, s.CalculateReturns1
+		return s.CalculateReturns.R0, s.CalculateReturns.R1
 	}
 }
 func (s *StubMyInterface) GetValue() string {
@@ -49,7 +55,7 @@ func (s *StubMyInterface) GetValue() string {
 	if s.GetValueFunc != nil {
 		return s.GetValueFunc()
 	} else {
-		return s.GetValueReturns0
+		return s.GetValueReturns.R0
 	}
 }
 func (s *StubMyInterface) SetValue(val string) {

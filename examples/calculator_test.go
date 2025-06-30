@@ -1,19 +1,18 @@
 package calculator_test
 
 import (
-	"errors"
 	"testing"
 
-	"github.com/phildrip/toe/examples"
+	calculator "github.com/phildrip/toe/examples/calculator"
 )
 
 func TestCalculatorStub(t *testing.T) {
 	// Instantiate the stub, enabling locking for this instance
-	stub := examples.NewStubCalculator(true)
+	stub := calculator.NewStubCalculator(true)
 
 	// --- Test 1: Using fixed return values ---
-	stub.SubtractReturns0 = 10
-	stub.SubtractReturns1 = nil
+	stub.SubtractReturns.R0 = 10
+	stub.SubtractReturns.R1 = nil
 
 	result, err := stub.Subtract(20, 10)
 	if err != nil {
