@@ -52,7 +52,6 @@ func collectImports(data *InterfaceData, t types.Type) {
 
 func FindInterface(inputDir string,
 	interfaceName string,
-	testPackage bool,
 	stubDir string) (*InterfaceData, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName |
@@ -96,9 +95,6 @@ func FindInterface(inputDir string,
 		generatedPackageName := pkg.Name
 		if stubDir != "" {
 			generatedPackageName = filepath.Base(stubDir)
-		}
-		if testPackage {
-			generatedPackageName += "_test"
 		}
 
 		data := &InterfaceData{

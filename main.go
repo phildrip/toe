@@ -15,14 +15,11 @@ import (
 )
 
 func run(stdout, stderr io.Writer, args []string) int {
-	var testPackage bool
 	var stubDirFlag string
 	var outputFile string // Keep outputFile as a flag
 
 	fs := flag.NewFlagSet("toe", flag.ContinueOnError)
 	fs.SetOutput(stderr) // Direct flag errors to stderr
-
-	fs.BoolVar(&testPackage, "test-package", false, "generate stub in a _test package")
 	fs.StringVar(&stubDirFlag,
 		"stub-dir",
 		"",
@@ -55,10 +52,6 @@ func run(stdout, stderr io.Writer, args []string) int {
 	}
 
 	outputFilename := fmt.Sprintf("stub_%s.go", strings.ToLower(interfaceName))
-	// If it's a test package, the filename also changes to include _test suffix
-	if testPackage {
-		outputFilename = fmt.Sprintf("stub_%s_test.go", strings.ToLower(interfaceName))
-	}
 
 	// If -o is not provided, derive it from stubDir and interface name
 	if outputFile == "" {
@@ -78,7 +71,6 @@ func run(stdout, stderr io.Writer, args []string) int {
 
 	interfaceData, err := FindInterface(inputDir,
 		interfaceName,
-		testPackage,
 		actualStubDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error finding interface: %v\n", err)

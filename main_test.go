@@ -36,13 +36,7 @@ func TestGenerateStub(t *testing.T) {
 			GoldenFile:    filepath.Join("testdata", "golden", "stubs", "stub_genericinterface.go"), // Default output path
 			Flags:         []string{},                                                              // No flags for default
 		},
-		{
-			Name:          "simple_test_package",
-			InputFile:     filepath.Join("testdata", "input", "simple"),
-			InterfaceName: "MyInterface",
-			GoldenFile:    filepath.Join("testdata", "golden", "stubs", "stub_myinterface_test.go"), // _test package output path
-			Flags:         []string{"--test-package"},
-		},
+
 		{
 			Name:          "simple_custom_stub_dir",
 			InputFile:     filepath.Join("testdata", "input", "simple"),
@@ -68,10 +62,6 @@ func TestGenerateStub(t *testing.T) {
 			}
 
 			outputFilename := fmt.Sprintf("stub_%s.go", strings.ToLower(tc.InterfaceName))
-			// If it's a test package, the filename also changes to include _test suffix
-			if strings.Contains(tc.Name, "test_package") {
-				outputFilename = fmt.Sprintf("stub_%s_test.go", strings.ToLower(tc.InterfaceName))
-			}
 
 			// Create a temporary output file path. 
 			testTempDir := t.TempDir()
