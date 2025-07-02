@@ -1,22 +1,25 @@
 package stubs
 
-import "sync"
+import (
+	"github.com/phildrip/toe/options"
+	"sync"
+)
 
 type StubGenericInterfaceDoCall[T any] struct {
 	Value T
 }
 type StubGenericInterfaceDoReturns[T any] struct {
-	R0 T
-	R1 error
+	T0     T
+	Error1 error
 }
 type StubGenericInterfaceGetCall[T any] struct {
 }
 type StubGenericInterfaceGetReturns[T any] struct {
-	R0 T
+	T0 T
 }
 type StubGenericInterface[T any] struct {
 	mu         sync.Mutex
-	_isLocked  bool
+	isLocked   bool
 	DoFunc     func(value T) (T, error)
 	DoCalls    []StubGenericInterfaceDoCall[T]
 	DoReturns  StubGenericInterfaceDoReturns[T]
@@ -25,11 +28,11 @@ type StubGenericInterface[T any] struct {
 	GetReturns StubGenericInterfaceGetReturns[T]
 }
 
-func NewStubGenericInterface[T any](withLocking bool) *StubGenericInterface[T] {
-	return &StubGenericInterface[T]{_isLocked: withLocking}
+func NewStubGenericInterface[T any](opts options.StubOptions) *StubGenericInterface[T] {
+	return &StubGenericInterface[T]{isLocked: opts.WithLocking}
 }
 func (s *StubGenericInterface[T]) Do(value T) (T, error) {
-	if s._isLocked {
+	if s.isLocked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
@@ -37,11 +40,11 @@ func (s *StubGenericInterface[T]) Do(value T) (T, error) {
 	if s.DoFunc != nil {
 		return s.DoFunc(value)
 	} else {
-		return s.DoReturns.R0, s.DoReturns.R1
+		return s.DoReturns.T0, s.DoReturns.Error1
 	}
 }
 func (s *StubGenericInterface[T]) Get() T {
-	if s._isLocked {
+	if s.isLocked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
@@ -49,6 +52,6 @@ func (s *StubGenericInterface[T]) Get() T {
 	if s.GetFunc != nil {
 		return s.GetFunc()
 	} else {
-		return s.GetReturns.R0
+		return s.GetReturns.T0
 	}
 }

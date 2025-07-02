@@ -1,26 +1,29 @@
 package stubs
 
-import "sync"
+import (
+	"github.com/phildrip/toe/options"
+	"sync"
+)
 
 type StubMyInterfaceCalculateCall struct {
 	X int
 	Y int
 }
 type StubMyInterfaceCalculateReturns struct {
-	R0 int
-	R1 error
+	Int0   int
+	Error1 error
 }
 type StubMyInterfaceGetValueCall struct {
 }
 type StubMyInterfaceGetValueReturns struct {
-	R0 string
+	String0 string
 }
 type StubMyInterfaceSetValueCall struct {
 	Val string
 }
 type StubMyInterface struct {
 	mu               sync.Mutex
-	_isLocked        bool
+	isLocked         bool
 	CalculateFunc    func(x int, y int) (int, error)
 	CalculateCalls   []StubMyInterfaceCalculateCall
 	CalculateReturns StubMyInterfaceCalculateReturns
@@ -31,11 +34,11 @@ type StubMyInterface struct {
 	SetValueCalls    []StubMyInterfaceSetValueCall
 }
 
-func NewStubMyInterface(withLocking bool) *StubMyInterface {
-	return &StubMyInterface{_isLocked: withLocking}
+func NewStubMyInterface(opts options.StubOptions) *StubMyInterface {
+	return &StubMyInterface{isLocked: opts.WithLocking}
 }
 func (s *StubMyInterface) Calculate(x int, y int) (int, error) {
-	if s._isLocked {
+	if s.isLocked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
@@ -43,11 +46,11 @@ func (s *StubMyInterface) Calculate(x int, y int) (int, error) {
 	if s.CalculateFunc != nil {
 		return s.CalculateFunc(x, y)
 	} else {
-		return s.CalculateReturns.R0, s.CalculateReturns.R1
+		return s.CalculateReturns.Int0, s.CalculateReturns.Error1
 	}
 }
 func (s *StubMyInterface) GetValue() string {
-	if s._isLocked {
+	if s.isLocked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
@@ -55,11 +58,11 @@ func (s *StubMyInterface) GetValue() string {
 	if s.GetValueFunc != nil {
 		return s.GetValueFunc()
 	} else {
-		return s.GetValueReturns.R0
+		return s.GetValueReturns.String0
 	}
 }
 func (s *StubMyInterface) SetValue(val string) {
-	if s._isLocked {
+	if s.isLocked {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}

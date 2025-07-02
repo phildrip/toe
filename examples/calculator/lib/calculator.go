@@ -1,4 +1,4 @@
-package calculator
+package lib
 
 type Calculator interface {
 	Add(a, b int) int

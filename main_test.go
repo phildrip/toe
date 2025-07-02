@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"testing"
 	"strings"
+	"testing"
 )
 
 // TestCases defines the structure for our golden file test cases.
@@ -118,10 +118,12 @@ func TestGenerateStub(t *testing.T) {
 			}
 
 			// Verify generated code compiles
-			cmd := exec.Command("go", "build", outputFilePath)
+			cmd := exec.Command("go", "build")
+			cmd.Dir = "." // Run build from the project root (assuming tests run from project root)
+			cmd.Args = append(cmd.Args, outputFilePath) // Build the generated file
+			
 			var buildStderr bytes.Buffer
-			cmd.Stderr = &buildStderr // Capture stderr from go build
-			cmd.Dir = t.TempDir()      // Run build in temp dir to avoid polluting module
+			cmd.Stderr = &buildStderr
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("Generated code for %s failed to compile: %v\nStderr: %s", tc.Name, err, buildStderr.String())
 			}
@@ -131,7 +133,7 @@ func TestGenerateStub(t *testing.T) {
 
 // generateDiff is a helper to produce a diff string (simplified for demonstration)
 func generateDiff(a, b []byte) string {
-	// In a real scenario, use a proper diffing library like github.com/sergi/go-diff
 	// For simplicity, we'll just show both versions.
+	// TODO: Consider using a proper diffing library like github.com/sergi/go-diff for better diff output.
 	return fmt.Sprintf("--- Generated\n+++ Golden\n%s\n%s", string(a), string(b))
 }
